@@ -4,16 +4,18 @@ import { TransformStore } from '../components/Transform';
 import { SensesStore } from '../components/Senses';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { distSq } from '../utils/Math';
-
-// Tag component for food entities
 import { ComponentStorage } from '../ecs/Component';
+
+// Food types for niche mechanics
+export const enum FoodType { Berry = 0, Grass = 1, Root = 2 }
 
 export interface FoodData {
   energy: number;
+  type: FoodType;
 }
 export const FoodStore = new ComponentStorage<FoodData>();
 
-const SIGHT_RANGE = 12;
+const SIGHT_RANGE = 14;
 const SIGHT_RANGE_SQ = SIGHT_RANGE * SIGHT_RANGE;
 
 export class SensorySystem extends System {
@@ -22,7 +24,6 @@ export class SensorySystem extends System {
 
   update(world: World, _dt: number): void {
     const creatures = world.query(this.query);
-    // Gather all food positions
     const foodEntities = world.query(FoodStore.bit | TransformStore.bit);
 
     for (const id of creatures) {
@@ -52,15 +53,13 @@ export class SensorySystem extends System {
         senses.foodVisible = true;
         senses.nearestFoodId = bestFoodId;
         senses.nearestFoodDist = Math.sqrt(bestFoodDSq) / SIGHT_RANGE;
-        // Relative angle: positive = food is to the right
         const dx = bestFoodX - transform.x;
         const dz = bestFoodZ - transform.z;
         const angleToFood = Math.atan2(dx, dz);
         let relAngle = angleToFood - transform.rotation;
-        // Normalize to [-PI, PI]
         while (relAngle > Math.PI) relAngle -= 2 * Math.PI;
         while (relAngle < -Math.PI) relAngle += 2 * Math.PI;
-        senses.nearestFoodAngle = relAngle / Math.PI; // [-1, 1]
+        senses.nearestFoodAngle = relAngle / Math.PI;
       } else {
         senses.foodVisible = false;
         senses.nearestFoodId = -1;

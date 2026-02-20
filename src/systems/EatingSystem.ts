@@ -3,16 +3,18 @@ import type { World } from '../ecs/World';
 import { TransformStore } from '../components/Transform';
 import { MotorStore } from '../components/Motor';
 import { BiochemStore } from '../components/Biochemistry';
+import { GenomeStore } from '../components/Genome';
 import { SensesStore } from '../components/Senses';
+import { RenderableStore } from '../components/Renderable';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
-import { FoodStore } from './SensorySystem';
+import { FoodStore, FoodType } from './SensorySystem';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
 import { distSq, clamp } from '../utils/Math';
 
-const EAT_RANGE_SQ = 1.8 * 1.8;
+const EAT_RANGE_SQ = 2.2 * 2.2;
 
 export class EatingSystem extends System {
-  readonly query = MotorStore.bit | BiochemStore.bit | SensesStore.bit | TransformStore.bit;
+  readonly query = MotorStore.bit | BiochemStore.bit | SensesStore.bit | TransformStore.bit | GenomeStore.bit;
   readonly priority = 55;
 
   update(world: World, _dt: number): void {
@@ -41,12 +43,30 @@ export class EatingSystem extends System {
       const food = FoodStore.get(foodId);
       if (!food) continue;
 
-      // Eat!
-      const { chemicals } = BiochemStore.get(id)!;
-      chemicals[ChemId.Glucose] = clamp(chemicals[ChemId.Glucose] + food.energy, 0, 1);
-      chemicals[ChemId.Reward] = clamp(chemicals[ChemId.Reward] + 0.3, 0, 1);
+      // Dietary efficiency based on genome
+      const { genome } = GenomeStore.get(id)!;
+      let efficiency: number;
+      switch (food.type) {
+        case FoodType.Berry: efficiency = genome.dietBerry; break;
+        case FoodType.Grass: efficiency = genome.dietGrass; break;
+        case FoodType.Root:  efficiency = genome.dietRoot; break;
+        default: efficiency = 0.33;
+      }
 
-      // Remove food
+      // Bigger creatures extract more energy but efficiency still matters
+      const sizeBonus = 0.7 + genome.bodyScale * 0.3;
+      const energyGained = food.energy * efficiency * sizeBonus;
+
+      const { chemicals } = BiochemStore.get(id)!;
+      chemicals[ChemId.Glucose] = clamp(chemicals[ChemId.Glucose] + energyGained, 0, 1);
+      chemicals[ChemId.Reward] = clamp(chemicals[ChemId.Reward] + 0.25 * efficiency, 0, 1);
+
+      // Remove food and its mesh
+      const renderable = RenderableStore.get(foodId);
+      if (renderable) {
+        const parent = renderable.object.parent;
+        if (parent) parent.remove(renderable.object);
+      }
       world.destroy(foodId);
     }
   }

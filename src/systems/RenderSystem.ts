@@ -3,25 +3,47 @@ import type { World } from '../ecs/World';
 import { TransformStore } from '../components/Transform';
 import { RenderableStore } from '../components/Renderable';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
+import { FoodStore } from './SensorySystem';
 
 export class RenderSystem extends System {
   readonly query = TransformStore.bit | RenderableStore.bit;
   readonly priority = 100;
 
   private deadTimers = new Map<number, number>();
+  private baseScales = new Map<number, number>();
 
-  update(world: World, _dt: number): void {
+  update(world: World, dt: number): void {
     const entities = world.query(this.query);
+    const time = performance.now() * 0.001;
 
     for (const id of entities) {
       const transform = TransformStore.get(id)!;
       const { object } = RenderableStore.get(id)!;
+      const lifecycle = LifecycleStore.get(id);
 
-      object.position.set(transform.x, transform.y, transform.z);
+      // For creature groups: set position but keep the baked-in Y offset
+      const baseY = object.userData.baseY ?? transform.y;
+      if (object.userData.baseY === undefined) {
+        object.userData.baseY = object.position.y || transform.y;
+      }
+
+      object.position.x = transform.x;
+      object.position.z = transform.z;
       object.rotation.y = transform.rotation;
+
+      // Food items are simple, no lifecycle
+      if (FoodStore.has(id)) {
+        object.position.y = transform.y;
+        continue;
+      }
+
+      // Subtle bobbing animation for alive creatures
+      if (lifecycle && lifecycle.stage === LifeStage.Alive) {
+        object.position.y = baseY + Math.sin(time * 3 + id * 1.7) * 0.03;
+      }
     }
 
-    // Handle dead creature cleanup
+    // Dead creature cleanup
     for (const id of entities) {
       const lifecycle = LifecycleStore.get(id);
       if (!lifecycle || lifecycle.stage !== LifeStage.Dead) continue;
@@ -30,17 +52,25 @@ export class RenderSystem extends System {
       timer++;
       this.deadTimers.set(id, timer);
 
-      // Fade out and shrink
       const renderable = RenderableStore.get(id)!;
-      const scale = Math.max(0, 1 - timer / 60);
-      renderable.object.scale.setScalar(scale);
 
-      // After fade, destroy
-      if (timer >= 60) {
-        const scene = renderable.object.parent;
-        if (scene) scene.remove(renderable.object);
+      // Save base scale on first dead frame
+      if (!this.baseScales.has(id)) {
+        this.baseScales.set(id, renderable.object.scale.x);
+      }
+      const baseScale = this.baseScales.get(id)!;
+
+      // Topple over and shrink
+      const progress = Math.min(timer / 80, 1);
+      renderable.object.rotation.z = progress * Math.PI / 2;
+      renderable.object.scale.setScalar(baseScale * (1 - progress * 0.8));
+
+      if (timer >= 80) {
+        const parent = renderable.object.parent;
+        if (parent) parent.remove(renderable.object);
         world.destroy(id);
         this.deadTimers.delete(id);
+        this.baseScales.delete(id);
       }
     }
   }

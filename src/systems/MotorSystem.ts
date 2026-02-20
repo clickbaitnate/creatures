@@ -9,7 +9,7 @@ import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
 import { clamp } from '../utils/Math';
 
-const WORLD_HALF = 24; // half-size of world ground plane
+const WORLD_HALF = 24;
 
 export class MotorSystem extends System {
   readonly query = TransformStore.bit | BrainStore.bit | MotorStore.bit | GenomeStore.bit;
@@ -38,7 +38,6 @@ export class MotorSystem extends System {
       const mate = brain.outputs[30];
       const _idle = brain.outputs[31];
 
-      // Update motor intents
       motor.forward = clamp(moveForward, 0, 2);
       motor.turnLeft = clamp(turnLeft, 0, 2);
       motor.turnRight = clamp(turnRight, 0, 2);
@@ -49,22 +48,29 @@ export class MotorSystem extends System {
       const netTurn = (motor.turnRight - motor.turnLeft) * genome.turnRate * dt;
       transform.rotation += netTurn;
 
-      // Apply movement
-      const speed = motor.forward * genome.speed * (0.5 + speedMod * 0.5);
-      const energyFactor = biochem ? clamp(biochem.chemicals[ChemId.Energy] * 3, 0.2, 1.0) : 1.0;
+      // Apply movement — bigger creatures are slower
+      const sizeSpeedPenalty = 1.0 / (0.5 + genome.bodyScale * 0.5);
+      const speed = motor.forward * genome.speed * (0.5 + speedMod * 0.5) * sizeSpeedPenalty;
+      const energyFactor = biochem ? clamp(biochem.chemicals[ChemId.Energy] * 4, 0.3, 1.0) : 1.0;
       const moveSpeed = speed * energyFactor * dt;
 
       transform.x += Math.sin(transform.rotation) * moveSpeed;
       transform.z += Math.cos(transform.rotation) * moveSpeed;
 
-      // Keep in bounds
-      transform.x = clamp(transform.x, -WORLD_HALF, WORLD_HALF);
-      transform.z = clamp(transform.z, -WORLD_HALF, WORLD_HALF);
+      // Keep in bounds — bounce off edges
+      if (transform.x < -WORLD_HALF || transform.x > WORLD_HALF) {
+        transform.x = clamp(transform.x, -WORLD_HALF, WORLD_HALF);
+        transform.rotation = Math.PI - transform.rotation;
+      }
+      if (transform.z < -WORLD_HALF || transform.z > WORLD_HALF) {
+        transform.z = clamp(transform.z, -WORLD_HALF, WORLD_HALF);
+        transform.rotation = -transform.rotation;
+      }
 
-      // Movement costs energy
-      if (biochem && moveSpeed > 0.01) {
-        biochem.chemicals[ChemId.ATP] -= genome.muscleRate * moveSpeed * 0.3;
-        biochem.chemicals[ChemId.ATP] = Math.max(0, biochem.chemicals[ChemId.ATP]);
+      // Movement costs energy — proportional to size (bigger burns more)
+      if (biochem && moveSpeed > 0.005) {
+        const cost = genome.muscleRate * moveSpeed * 0.1 * genome.bodyScale;
+        biochem.chemicals[ChemId.ATP] = Math.max(0, biochem.chemicals[ChemId.ATP] - cost);
       }
     }
   }

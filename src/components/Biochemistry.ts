@@ -7,10 +7,10 @@ export interface BiochemData {
 
 export function createBiochem(): BiochemData {
   const chemicals = new Float32Array(CHEMICAL_COUNT);
-  // Starting values
-  chemicals[1] = 0.8;  // Energy
-  chemicals[3] = 0.5;  // Glucose
-  chemicals[4] = 0.5;  // ATP
+  // Generous starting values so creatures don't die immediately
+  chemicals[1] = 0.9;  // Energy
+  chemicals[3] = 0.8;  // Glucose
+  chemicals[4] = 0.7;  // ATP
   chemicals[8] = 1.0;  // LifeForce
   return { chemicals };
 }

@@ -20,35 +20,35 @@ export class BiochemistrySystem extends System {
       const { chemicals } = BiochemStore.get(id)!;
       const { genome } = GenomeStore.get(id)!;
 
-      // Stomach: glucose → ATP
-      if (chemicals[ChemId.Glucose] > 0.05) {
-        const converted = Math.min(chemicals[ChemId.Glucose], genome.stomachRate * 0.05);
+      // Stomach: glucose → ATP (generous conversion)
+      if (chemicals[ChemId.Glucose] > 0.02) {
+        const converted = Math.min(chemicals[ChemId.Glucose] * 0.15, genome.stomachRate * 0.08);
         chemicals[ChemId.Glucose] -= converted;
-        chemicals[ChemId.ATP] += converted * 0.8;
+        chemicals[ChemId.ATP] += converted * 1.2;
       }
 
-      // Muscles: ATP → Energy (sustained energy)
-      if (chemicals[ChemId.ATP] > 0.02) {
-        const burned = genome.muscleRate * 0.02;
+      // Muscles: ATP → Energy (sustained)
+      if (chemicals[ChemId.ATP] > 0.01) {
+        const burned = genome.muscleRate * 0.015;
         chemicals[ChemId.ATP] -= Math.min(chemicals[ChemId.ATP], burned);
-        chemicals[ChemId.Energy] += burned * 0.5;
+        chemicals[ChemId.Energy] += burned * 0.8;
       }
 
-      // Hunger rises when glucose is low
-      chemicals[ChemId.Hunger] = clamp(1.0 - chemicals[ChemId.Glucose] * 2.0, 0, 1);
+      // Hunger rises when glucose is low (but not as aggressively)
+      chemicals[ChemId.Hunger] = clamp(1.0 - chemicals[ChemId.Glucose] * 3.0, 0, 1);
 
       // Tiredness rises when ATP is low
-      chemicals[ChemId.Tiredness] = clamp(1.0 - chemicals[ChemId.ATP] * 2.0, 0, 1);
+      chemicals[ChemId.Tiredness] = clamp(1.0 - chemicals[ChemId.ATP] * 3.0, 0, 1);
 
-      // Energy slowly drains (base metabolism)
-      chemicals[ChemId.Energy] -= 0.001;
+      // Base metabolism: very gentle energy drain
+      chemicals[ChemId.Energy] -= 0.0003;
 
-      // LifeForce degrades slowly; faster when starving
-      if (chemicals[ChemId.Energy] < 0.1) {
-        chemicals[ChemId.LifeForce] -= 0.002;
+      // LifeForce only degrades during serious starvation
+      if (chemicals[ChemId.Energy] < 0.05 && chemicals[ChemId.Glucose] < 0.02) {
+        chemicals[ChemId.LifeForce] -= 0.001;
       }
-      if (chemicals[ChemId.Glucose] < 0.01 && chemicals[ChemId.ATP] < 0.01) {
-        chemicals[ChemId.LifeForce] -= 0.005;  // starving
+      if (chemicals[ChemId.Energy] <= 0 && chemicals[ChemId.ATP] <= 0) {
+        chemicals[ChemId.LifeForce] -= 0.003; // actually starving
       }
 
       // Age increases
