@@ -9,6 +9,7 @@ import { brainTick, applyLearning } from '../brain/CTRNN';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
 import type { SeasonState } from '../world/Seasons';
 import type { VoxelWorld } from '../voxel/VoxelWorld';
+import { NEURON_INDICES, SEASON_WARMTH, TERRAIN, TIMERS } from '../config/Constants';
 
 // 60-neuron layout:
 // Drive(0-3), Sense(4-23), Concept(24-39), Planning(40-47), Decision(48-59)
@@ -48,78 +49,83 @@ export class BrainSystem extends System {
       const lifecycle = LifecycleStore.get(id);
       if (lifecycle && lifecycle.stage === LifeStage.Dead) continue;
 
-      const { brain } = BrainStore.get(id)!;
-      const senses = SensesStore.get(id)!;
-      const { chemicals } = BiochemStore.get(id)!;
+      const brainData = BrainStore.get(id);
+      const senses = SensesStore.get(id);
+      const biochemData = BiochemStore.get(id);
+      if (!brainData || !senses || !biochemData) continue;
+
+      const { brain } = brainData;
+      const { chemicals } = biochemData;
 
       // Inject drive inputs (Drive lobe: neurons 0-3)
-      brain.inputs[0] = chemicals[ChemId.Hunger];       // hunger drive
-      brain.inputs[1] = chemicals[ChemId.Tiredness];     // tiredness drive
-      brain.inputs[2] = chemicals[ChemId.Pain];          // pain drive
-      brain.inputs[3] = 1.0 - chemicals[ChemId.Energy];  // low energy = high drive
+      brain.inputs[NEURON_INDICES.DRIVE_HUNGER] = chemicals[ChemId.Hunger];
+      brain.inputs[NEURON_INDICES.DRIVE_TIREDNESS] = chemicals[ChemId.Tiredness];
+      brain.inputs[NEURON_INDICES.DRIVE_PAIN] = chemicals[ChemId.Pain];
+      brain.inputs[NEURON_INDICES.DRIVE_ENERGY] = 1.0 - chemicals[ChemId.Energy];  // low energy = high drive
 
       // Inject sensory inputs (Sense lobe: neurons 4-23)
       // Food
       if (senses.foodVisible) {
-        brain.inputs[4] = Math.max(0, -senses.nearestFoodAngle);  // food left
-        brain.inputs[5] = Math.max(0, senses.nearestFoodAngle);   // food right
-        brain.inputs[6] = 1.0 - senses.nearestFoodDist;           // food near
-        brain.inputs[7] = senses.nearestFoodDist;                  // food far
+        brain.inputs[NEURON_INDICES.SENSE_FOOD_LEFT] = Math.max(0, -senses.nearestFoodAngle);
+        brain.inputs[NEURON_INDICES.SENSE_FOOD_RIGHT] = Math.max(0, senses.nearestFoodAngle);
+        brain.inputs[NEURON_INDICES.SENSE_FOOD_NEAR] = 1.0 - senses.nearestFoodDist;
+        brain.inputs[NEURON_INDICES.SENSE_FOOD_FAR] = senses.nearestFoodDist;
       }
       // Creature
       if (senses.creatureVisible) {
-        brain.inputs[8] = Math.max(0, -senses.nearestCreatureAngle);  // creature left
-        brain.inputs[9] = Math.max(0, senses.nearestCreatureAngle);   // creature right
-        brain.inputs[10] = 1.0 - senses.nearestCreatureDist;          // creature near
-        brain.inputs[11] = senses.nearestCreatureDist;                 // creature far
+        brain.inputs[NEURON_INDICES.SENSE_CREATURE_LEFT] = Math.max(0, -senses.nearestCreatureAngle);
+        brain.inputs[NEURON_INDICES.SENSE_CREATURE_RIGHT] = Math.max(0, senses.nearestCreatureAngle);
+        brain.inputs[NEURON_INDICES.SENSE_CREATURE_NEAR] = 1.0 - senses.nearestCreatureDist;
+        brain.inputs[NEURON_INDICES.SENSE_CREATURE_FAR] = senses.nearestCreatureDist;
       }
       // Resource
       if (senses.resourceVisible) {
-        brain.inputs[12] = Math.max(0, -senses.nearestResourceAngle);
-        brain.inputs[13] = Math.max(0, senses.nearestResourceAngle);
-        brain.inputs[14] = 1.0 - senses.nearestResourceDist;
+        brain.inputs[NEURON_INDICES.SENSE_RESOURCE_LEFT] = Math.max(0, -senses.nearestResourceAngle);
+        brain.inputs[NEURON_INDICES.SENSE_RESOURCE_RIGHT] = Math.max(0, senses.nearestResourceAngle);
+        brain.inputs[NEURON_INDICES.SENSE_RESOURCE_NEAR] = 1.0 - senses.nearestResourceDist;
       }
       // Prey
       if (senses.preyVisible) {
-        brain.inputs[15] = 1.0 - senses.nearestPreyDist;
+        brain.inputs[NEURON_INDICES.SENSE_PREY_NEAR] = 1.0 - senses.nearestPreyDist;
       }
       // Building
       if (senses.buildingVisible) {
-        brain.inputs[16] = 1.0 - senses.nearestBuildingDist;
+        brain.inputs[NEURON_INDICES.SENSE_BUILDING_NEAR] = 1.0 - senses.nearestBuildingDist;
       }
       // Threat
-      brain.inputs[17] = senses.threatLevel;
+      brain.inputs[NEURON_INDICES.SENSE_THREAT_LEVEL] = senses.threatLevel;
       // Current tile
-      brain.inputs[18] = senses.currentResourceAmount;
-      // Crowd density (repurpose neuron 19 — was prey visible bool, redundant with 15)
-      brain.inputs[19] = senses.crowdDensity;
+      brain.inputs[NEURON_INDICES.SENSE_CURRENT_RESOURCE] = senses.currentResourceAmount;
+      // Crowd density
+      brain.inputs[NEURON_INDICES.SENSE_CROWD_DENSITY] = senses.crowdDensity;
 
       // Environment sense inputs (neurons 20-23)
       // Season warmth: spring/summer warm (0.7-1.0), autumn cool (0.4), winter cold (0.1)
       if (this.seasonState) {
-        const warmth = [0.7, 1.0, 0.4, 0.1][this.seasonState.season] ?? 0.5;
-        brain.inputs[20] = warmth;
+        const warmthValues = [SEASON_WARMTH.SPRING, SEASON_WARMTH.SUMMER, SEASON_WARMTH.AUTUMN, SEASON_WARMTH.WINTER];
+        const warmth = warmthValues[this.seasonState.season] ?? SEASON_WARMTH.DEFAULT;
+        brain.inputs[NEURON_INDICES.SENSE_SEASON_WARMTH] = warmth;
       }
 
       // Altitude: normalized creature height (0=sea level, 1=high)
       const transform = TransformStore.get(id);
       if (transform) {
-        brain.inputs[21] = Math.min(1, Math.max(0, transform.y / 20));
+        brain.inputs[NEURON_INDICES.SENSE_ALTITUDE] = Math.min(1, Math.max(0, transform.y / TERRAIN.MAX_ALTITUDE));
 
         // Terrain slope: difference in height ahead vs current position
         if (this.voxelWorld) {
-          const aheadX = transform.x + Math.sin(transform.rotation) * 1.0;
-          const aheadZ = transform.z + Math.cos(transform.rotation) * 1.0;
+          const aheadX = transform.x + Math.sin(transform.rotation) * TERRAIN.SLOPE_CHECK_DISTANCE;
+          const aheadZ = transform.z + Math.cos(transform.rotation) * TERRAIN.SLOPE_CHECK_DISTANCE;
           const aheadY = this.voxelWorld.getHeightWorld(aheadX, aheadZ);
-          const slope = (aheadY - transform.y) / 1.0; // rise over run
-          brain.inputs[22] = Math.min(1, Math.max(-1, slope)); // -1 to 1
+          const slope = (aheadY - transform.y) / TERRAIN.SLOPE_CHECK_DISTANCE;
+          brain.inputs[NEURON_INDICES.SENSE_TERRAIN_SLOPE] = Math.min(TERRAIN.SLOPE_MAX, Math.max(TERRAIN.SLOPE_MIN, slope));
         }
       }
 
       // Time of day: sinusoidal cycle based on season tick
       if (this.seasonState) {
-        const dayPhase = (this.seasonState.tick % 200) / 200; // 200-tick day
-        brain.inputs[23] = Math.sin(dayPhase * Math.PI * 2) * 0.5 + 0.5;
+        const dayPhase = (this.seasonState.tick % TIMERS.DAY_TICKS) / TIMERS.DAY_TICKS;
+        brain.inputs[NEURON_INDICES.SENSE_TIME_OF_DAY] = Math.sin(dayPhase * Math.PI * 2) * 0.5 + 0.5;
       }
 
       // Run CTRNN

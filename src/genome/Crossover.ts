@@ -1,5 +1,6 @@
 import { randFloat } from '../utils/Math';
 import { type CreatureGenome, Sex } from './Genome';
+import { COMBAT_WEIGHTS_IH, COMBAT_BIAS_H, COMBAT_WEIGHTS_HO, COMBAT_BIAS_O } from '../brain/CombatNet';
 
 export function crossover(parentA: CreatureGenome, parentB: CreatureGenome): CreatureGenome {
   const pick = () => Math.random() < 0.5;
@@ -76,6 +77,30 @@ export function crossover(parentA: CreatureGenome, parentB: CreatureGenome): Cre
 
     speciesMarker,
 
+    // Combat net weights: crossover with mutation
+    combatWeightsIH: crossoverWeights(parentA.combatWeightsIH, parentB.combatWeightsIH, COMBAT_WEIGHTS_IH),
+    combatBiasH: crossoverWeights(parentA.combatBiasH, parentB.combatBiasH, COMBAT_BIAS_H),
+    combatWeightsHO: crossoverWeights(parentA.combatWeightsHO, parentB.combatWeightsHO, COMBAT_WEIGHTS_HO),
+    combatBiasO: crossoverWeights(parentA.combatBiasO, parentB.combatBiasO, COMBAT_BIAS_O),
+
     birthSign: 0, // set at birth by Zodiac system
   };
+}
+
+/** Crossover weight arrays with random crossover point + gaussian mutation */
+function crossoverWeights(a: number[], b: number[], len: number): number[] {
+  // Fallback if parents don't have combat weights (old genomes)
+  if (!a || !b || a.length === 0 || b.length === 0) {
+    return Array.from({ length: len }, () => randFloat(-0.3, 0.3));
+  }
+
+  const crossPoint = Math.floor(Math.random() * len);
+  const result = new Array(len);
+  for (let i = 0; i < len; i++) {
+    const parentVal = i < crossPoint ? a[i] : b[i];
+    // Gaussian mutation (σ=0.05)
+    const noise = (Math.random() + Math.random() + Math.random() - 1.5) * 0.05 * 2;
+    result[i] = Math.max(-1, Math.min(1, parentVal + noise));
+  }
+  return result;
 }

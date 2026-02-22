@@ -13,7 +13,9 @@ import { MotorStore } from '../components/Motor';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
 import { distSq, clamp } from '../utils/Math';
 import { VocabularyStore, learn } from '../components/Vocabulary';
+import { DiaryStore, addDiaryEntry, DiaryEventType } from '../components/Diary';
 import type { FactionManager } from '../world/FactionSystem';
+import { simStats } from '../stats/SimStats';
 
 const BARTER_RANGE_SQ = 3.5 * 3.5; // must be in earshot (~3.5 units)
 const BARTER_COOLDOWN = 100;
@@ -108,10 +110,23 @@ export class MarketSystem extends System {
       if (relation < -0.3 && !amTrader) continue;
 
       // Find complementary trade: I have surplus of X, they lack X, and vice versa
-      const traded = this.attemptBarter(id, bestPartnerId, inv, otherInv);
+      const tradeResult = this.attemptBarter(id, bestPartnerId, inv, otherInv);
 
-      if (traded) {
+      if (tradeResult.traded) {
         this.totalTrades++;
+        simStats.recordTrade();
+
+        // Diary entries for both parties
+        const diaryA = DiaryStore.get(id);
+        const diaryB = DiaryStore.get(bestPartnerId);
+        if (diaryA) addDiaryEntry(diaryA, 0, DiaryEventType.Trade, {
+          otherId: bestPartnerId, otherName: otherSocial.name,
+          itemGiven: tradeResult.giveA ?? -1, itemReceived: tradeResult.giveB ?? -1,
+        });
+        if (diaryB) addDiaryEntry(diaryB, 0, DiaryEventType.Trade, {
+          otherId: id, otherName: social.name,
+          itemGiven: tradeResult.giveB ?? -1, itemReceived: tradeResult.giveA ?? -1,
+        });
 
         // Both get reward
         const biochemA = BiochemStore.get(id);
@@ -155,12 +170,12 @@ export class MarketSystem extends System {
   }
 
   /** Attempt a complementary barter between two creatures.
-   *  Returns true if a trade occurred. */
+   *  Returns traded flag and what each side gave. */
   private attemptBarter(
     idA: number, idB: number,
     invA: import('../components/Inventory').InventoryData,
     invB: import('../components/Inventory').InventoryData,
-  ): boolean {
+  ): { traded: boolean; giveA: ItemType | null; giveB: ItemType | null } {
     // Find something A has surplus (3+) that B lacks (0)
     let giveA: ItemType | null = null;
     let giveB: ItemType | null = null;
@@ -169,10 +184,10 @@ export class MarketSystem extends System {
       const countA = countItem(invA, item);
       const countB = countItem(invB, item);
 
-      if (countA >= 3 && countB === 0 && giveA === null) {
+      if (countA >= 2 && countB === 0 && giveA === null) {
         giveA = item; // A gives this to B
       }
-      if (countB >= 3 && countA === 0 && giveB === null) {
+      if (countB >= 2 && countA === 0 && giveB === null) {
         giveB = item; // B gives this to A
       }
     }
@@ -217,7 +232,7 @@ export class MarketSystem extends System {
     }
 
     // Must have at least one side giving something
-    if (!giveA && !giveB) return false;
+    if (!giveA && !giveB) return { traded: false, giveA: null, giveB: null };
 
     // Execute trade
     if (giveA !== null && hasSpace(invB)) {
@@ -229,7 +244,7 @@ export class MarketSystem extends System {
       addItem(invA, giveB, 1);
     }
 
-    return true;
+    return { traded: true, giveA, giveB };
   }
 
   /** Trader caste: walk toward distant creatures to establish trade routes */

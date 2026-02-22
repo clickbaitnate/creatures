@@ -24,6 +24,10 @@ export const ITEM_EMOJI: Partial<Record<ItemType, string>> = {
   [ItemType.MetalPick]: '⛏️',
   [ItemType.FoodBundle]: '🍽️',
   [ItemType.Coal]: '⛏️',
+  [ItemType.RawIron]: '⛏️',
+  [ItemType.RawGold]: '⛏️',
+  [ItemType.IronIngot]: '⚙️',
+  [ItemType.GoldIngot]: '⚙️',
   [ItemType.Torch]: '🔥',
   [ItemType.IronSword]: '⚔️',
   [ItemType.IronArmor]: '🛡️',
@@ -34,10 +38,21 @@ export const ITEM_EMOJI: Partial<Record<ItemType, string>> = {
   [ItemType.Ship]: '🚢',
 };
 
-/** Create a new vocabulary starting with basic emotion and self emojis */
+/** Create a new vocabulary starting with basic emotion, self, AND crafting emojis.
+ *  All creatures know basic material and tool concepts innately so they can craft
+ *  food bundles, crafting tables, and basic tools from day one. */
 export function createVocabulary(): VocabularyData {
   return {
-    known: new Set<string>(['😊', '😢', '😡', '😨', '👤']),
+    known: new Set<string>([
+      // Emotions & self
+      '😊', '😢', '😡', '😨', '👤',
+      // Basic materials (gathered from the world)
+      '🍎', '🌿', '🪵', '🪨',
+      // Crafting concepts (food, tools, weapons, shields)
+      '🍽️', '⚔️', '🛡️', '⛏️',
+      // Water, boat, fire — innate knowledge for boat crafting and cooking
+      '💧', '⛵', '🔥',
+    ]),
     recent: [],
   };
 }

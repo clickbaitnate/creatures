@@ -2,12 +2,14 @@ import * as THREE from 'three';
 import { BlockType, BLOCK_COLORS, type VoxelTemplate, BUILDING_TEMPLATES } from './Templates';
 import { BuildingType } from '../components/Building';
 import { terrainY } from '../world/Environment';
+import { createBuildingTexture } from '../voxel/BlockTextures';
 
 const BLOCK_SIZE = 0.25;
 const MAX_BLOCKS_PER_TYPE = 8000; // plenty for ~100 buildings
 
 export class VoxelRenderer {
   private meshes = new Map<BlockType, THREE.InstancedMesh>();
+  private textures: THREE.CanvasTexture[] = [];
   private scene: THREE.Scene;
   private dirty = false;
   private buildings: { x: number; z: number; type: BuildingType; factionColor: number }[] = [];
@@ -19,11 +21,16 @@ export class VoxelRenderer {
 
     // Create one InstancedMesh per block type (skip Air)
     for (let bt = 1; bt <= 11; bt++) {
-      const color = BLOCK_COLORS[bt as BlockType];
-      const mat = new THREE.MeshLambertMaterial({ color });
+      const tex = createBuildingTexture(bt as BlockType);
+      this.textures.push(tex);
+      const mat = new THREE.MeshLambertMaterial({ map: tex });
       if (bt === BlockType.Glass) {
         mat.transparent = true;
         mat.opacity = 0.5;
+      }
+      if (bt === BlockType.Fire) {
+        mat.emissive = new THREE.Color(0xFF4400);
+        mat.emissiveIntensity = 0.8;
       }
       const mesh = new THREE.InstancedMesh(blockGeo, mat, MAX_BLOCKS_PER_TYPE);
       mesh.count = 0;
@@ -104,5 +111,7 @@ export class VoxelRenderer {
       (mesh.material as THREE.Material).dispose();
     }
     this.meshes.clear();
+    for (const tex of this.textures) tex.dispose();
+    this.textures.length = 0;
   }
 }

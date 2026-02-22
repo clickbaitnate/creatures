@@ -13,12 +13,15 @@ import { distSq, clamp } from '../utils/Math';
 import type { FactionManager } from '../world/FactionSystem';
 import type { HierarchySystem } from '../world/HierarchySystem';
 import type { PoliticsSystem } from '../world/PoliticsSystem';
+import { simStats, DeathCause } from '../stats/SimStats';
 import {
   EMOTIONS, NEEDS, ACTIVITIES, SOCIAL_SPEECH, SYMBOLS,
   emotionEmoji, pick,
 } from '../world/EmojiVocabulary';
 import { MemoryStore, MemoryType } from '../components/Memory';
 import { VocabularyStore, learn, pickKnown, learnAndPick } from '../components/Vocabulary';
+import { CombatStore } from '../components/Combat';
+import { DiaryStore, addDiaryEntry, DiaryEventType } from '../components/Diary';
 import type { SeasonState } from '../world/Seasons';
 import { Season } from '../world/Seasons';
 
@@ -29,6 +32,7 @@ const FIGHT_COOLDOWN = 20;
 const CHALLENGE_RANGE_SQ = 3 * 3;
 const CHALLENGE_COOLDOWN = 100;
 const CLAN_CHECK_INTERVAL = 200; // try forming clans every 200 ticks
+const DEFECT_CHECK_INTERVAL = 300; // try faction switches every 300 ticks
 
 export class SocialSystem extends System {
   readonly query = SocialStore.bit | TransformStore.bit | GenomeStore.bit;
@@ -41,6 +45,7 @@ export class SocialSystem extends System {
   private talkTimers = new Map<number, number>();
   private challengeTimers = new Map<number, number>();
   private clanCheckTimer = 0;
+  private defectCheckTimer = 0;
   private tickCount = 0;
 
   update(world: World, _dt: number): void {
@@ -62,6 +67,61 @@ export class SocialSystem extends System {
             if (vocab) {
               social.speechEmoji = learnAndPick(vocab, EMOTIONS.pride);
               social.speechTimer = 60;
+            }
+          }
+        }
+      }
+    }
+
+    // Periodically check for faction defections and wanderer recruitment
+    this.defectCheckTimer++;
+    if (this.defectCheckTimer >= DEFECT_CHECK_INTERVAL && this.factionManager) {
+      this.defectCheckTimer = 0;
+      for (const id of entities) {
+        const lifecycle = LifecycleStore.get(id);
+        if (lifecycle && lifecycle.stage === LifeStage.Dead) continue;
+
+        const social = SocialStore.get(id);
+        if (!social) continue;
+        const biochem = BiochemStore.get(id);
+        const expr = ExpressionStore.get(id);
+
+        // Calculate dissatisfaction: anxiety + hunger + pain + lost fights
+        const anxiety = expr?.anxiety ?? 0;
+        const hunger = biochem ? biochem.chemicals[ChemId.Hunger] : 0;
+        const energy = biochem ? biochem.chemicals[ChemId.Energy] : 0.5;
+        const healthLoss = 1 - social.health;
+        const dissatisfaction = anxiety * 0.3 + hunger * 0.25 + (1 - energy) * 0.2 + healthLoss * 0.25;
+
+        // Try to recruit wanderers first (cheaper check)
+        const recruitTarget = this.factionManager.tryRecruitWanderer(id);
+        if (recruitTarget !== null) {
+          const newFaction = this.factionManager.switchFaction(id, recruitTarget, this.tickCount);
+          if (newFaction) {
+            social.factionId = newFaction.id;
+            const vocab = VocabularyStore.get(id);
+            if (vocab) {
+              social.speechEmoji = learnAndPick(vocab, EMOTIONS.pride);
+              social.speechTimer = 60;
+            }
+            continue;
+          }
+        }
+
+        // Try defection (only 5% chance per check even if conditions are met — not instant)
+        if (Math.random() < 0.05) {
+          const defectTarget = this.factionManager.tryDefect(id, dissatisfaction);
+          if (defectTarget !== null) {
+            const newFaction = this.factionManager.switchFaction(id, defectTarget, this.tickCount);
+            if (newFaction) {
+              social.factionId = newFaction.id;
+              const vocab = VocabularyStore.get(id);
+              if (vocab) {
+                social.speechEmoji = newFaction.name === 'Wanderers'
+                  ? learnAndPick(vocab, EMOTIONS.nervous)
+                  : learnAndPick(vocab, EMOTIONS.pride);
+                social.speechTimer = 60;
+              }
             }
           }
         }
@@ -185,9 +245,12 @@ export class SocialSystem extends System {
         else if (relation < -0.3) {
           const atWar = this.politicsSystem?.isAtWar(myFaction, theirFaction) ?? false;
           if (dsq < FIGHT_RANGE_SQ && social.attackCooldown <= 0) {
-            // Fight! Higher aggression during war. Anxiety boosts fight chance.
+            // Fight! Use combat net aggression if available, else fallback to random
+            const combatData = CombatStore.get(id);
+            const netAggression = combatData?.inCombat ? combatData.net.outputs[3] : 0;
             const anxietyBoost = expr ? expr.anxiety * 0.1 : 0;
-            const fightChance = (atWar ? genome.aggression * 0.3 : genome.aggression * 0.15) + anxietyBoost;
+            const baseFight = atWar ? genome.aggression * 0.3 : genome.aggression * 0.15;
+            const fightChance = Math.max(baseFight, netAggression * 0.5) + anxietyBoost;
             if (Math.random() < fightChance) {
               if (vocab) {
                 social.speechEmoji = learnAndPick(vocab, EMOTIONS.rage);
@@ -210,9 +273,36 @@ export class SocialSystem extends System {
                 armorReduce = getArmorReduction(otherInv);
               }
               const rawDmg = 0.08 * genome.aggression * weaponMult;
-              const finalDmg = rawDmg * (1 - armorReduce);
+              // Coordinated attack bonus: +25% if 2+ allies targeting same enemy
+              let coordBonus = 1.0;
+              const allySocials = world.query(SocialStore.bit | TransformStore.bit);
+              let alliesOnTarget = 0;
+              for (const aid of allySocials) {
+                if (aid === id) continue;
+                const as = SocialStore.get(aid);
+                if (as && as.factionId === myFaction && as.attackTarget === otherId) alliesOnTarget++;
+                if (alliesOnTarget >= 2) break;
+              }
+              if (alliesOnTarget >= 1) coordBonus = 1.25;
+              const finalDmg = rawDmg * (1 - armorReduce) * coordBonus;
               otherSocial.health = clamp(otherSocial.health - finalDmg, 0, 1);
               if (biochem) biochem.chemicals[ChemId.Pain] = clamp(biochem.chemicals[ChemId.Pain] + 0.1, 0, 1);
+
+              // Track damage in combat component for learning
+              const otherCombat = CombatStore.get(otherId);
+              if (otherCombat) otherCombat.recentDamage = clamp(otherCombat.recentDamage + finalDmg, 0, 1);
+              // Attacker reward for dealing damage
+              if (combatData) combatData.combatReward += 0.2;
+
+              // Diary: combat entries
+              const atkDiary = DiaryStore.get(id);
+              const defDiary = DiaryStore.get(otherId);
+              if (atkDiary) addDiaryEntry(atkDiary, 0, DiaryEventType.CombatWin, {
+                otherId, otherName: otherSocial.name,
+              });
+              if (defDiary) addDiaryEntry(defDiary, 0, DiaryEventType.CombatLoss, {
+                otherId: id, otherName: social.name,
+              });
 
               // Vocabulary: fighting teaches combat emojis
               const myVocab2 = VocabularyStore.get(id);
@@ -310,8 +400,16 @@ export class SocialSystem extends System {
 
             if (myStr > theirStr) {
               this.hierarchySystem.recordWin(id);
+              const dWin = DiaryStore.get(id);
+              const dLose = DiaryStore.get(otherId);
+              if (dWin) addDiaryEntry(dWin, 0, DiaryEventType.DominanceWin, { otherId, otherName: otherSocial.name });
+              if (dLose) addDiaryEntry(dLose, 0, DiaryEventType.DominanceLoss, { otherId: id, otherName: social.name });
             } else {
               this.hierarchySystem.recordWin(otherId);
+              const dWin2 = DiaryStore.get(otherId);
+              const dLose2 = DiaryStore.get(id);
+              if (dWin2) addDiaryEntry(dWin2, 0, DiaryEventType.DominanceWin, { otherId: id, otherName: social.name });
+              if (dLose2) addDiaryEntry(dLose2, 0, DiaryEventType.DominanceLoss, { otherId, otherName: otherSocial.name });
             }
 
             this.challengeTimers.set(id, CHALLENGE_COOLDOWN);
@@ -435,7 +533,10 @@ export class SocialSystem extends System {
 
       // Health-based death from combat
       if (social.health <= 0) {
-        if (lifecycle) lifecycle.stage = LifeStage.Dead;
+        if (lifecycle) {
+          lifecycle.stage = LifeStage.Dead;
+          simStats.recordDeath(DeathCause.Combat, lifecycle.age);
+        }
       }
     }
   }

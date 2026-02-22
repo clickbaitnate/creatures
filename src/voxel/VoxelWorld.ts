@@ -1,7 +1,6 @@
 // Chunk-based voxel world: terrain generation, block get/set, height queries.
 
 import { Block, BLOCK_PROPS } from './BlockTypes';
-import { terrainY } from '../world/Environment';
 
 export const BLOCK_SIZE = 0.5;
 export const CHUNK_W = 16;
@@ -37,6 +36,24 @@ export class VoxelWorld {
   chunks: Chunk[];
   /** Sapling growth timers: blockKey → ticks remaining */
   saplingTimers = new Map<string, number>();
+  /** The seed used to generate this world (0 = not yet generated) */
+  seed = 0;
+
+  // Seed-derived noise offsets (set in generate() or initSeedOffsets())
+  private terrainOffX = 0;
+  private terrainOffZ = 0;
+  private biomeOffX = 0;
+  private biomeOffZ = 0;
+
+  /** Recompute seed-derived offsets (call after restoring seed from a save). */
+  initSeedOffsets(seed: number): void {
+    this.seed = seed;
+    const rng = mulberry32(seed);
+    this.terrainOffX = rng() * 1000 - 500;
+    this.terrainOffZ = rng() * 1000 - 500;
+    this.biomeOffX = rng() * 1000 - 500;
+    this.biomeOffZ = rng() * 1000 - 500;
+  }
 
   constructor() {
     this.chunks = new Array(CHUNKS_X * CHUNKS_Z);
@@ -140,22 +157,25 @@ export class VoxelWorld {
     return [wx, wy, wz];
   }
 
-  /** Biome at block position. Uses temperature/moisture noise. */
+  /** Biome at block position. Uses temperature/moisture noise offset by seed. */
   getBiome(bx: number, bz: number): Biome {
     const wx = bx * BLOCK_SIZE - WORLD_HALF;
     const wz = bz * BLOCK_SIZE - WORLD_HALF;
+    // Seed-shifted coords for noise variation
+    const sx = wx + this.biomeOffX;
+    const sz = wz + this.biomeOffZ;
 
-    // Temperature: warm in south, cold in north, with noise variation
+    // Temperature: warm in south, cold in north, with seeded noise variation
     const temp = 0.5
-      + wz / (WORLD_HALF * 2) * 0.4  // latitude gradient
-      + Math.sin(wx * 0.06 + wz * 0.04) * 0.2
-      + Math.sin(wx * 0.12) * Math.cos(wz * 0.08) * 0.15;
+      + wz / (WORLD_HALF * 2) * 0.4  // latitude gradient (not seeded)
+      + Math.sin(sx * 0.06 + sz * 0.04) * 0.2
+      + Math.sin(sx * 0.12) * Math.cos(sz * 0.08) * 0.15;
 
-    // Moisture: varies east-west with noise
+    // Moisture: varies east-west with seeded noise
     const moist = 0.5
-      + Math.sin(wx * 0.05 + 3.7) * Math.cos(wz * 0.07 + 1.3) * 0.3
-      + Math.sin(wx * 0.1 + wz * 0.06) * 0.15
-      + Math.cos(wz * 0.04 + wx * 0.03) * 0.1;
+      + Math.sin(sx * 0.05 + 3.7) * Math.cos(sz * 0.07 + 1.3) * 0.3
+      + Math.sin(sx * 0.1 + sz * 0.06) * 0.15
+      + Math.cos(sz * 0.04 + sx * 0.03) * 0.1;
 
     if (temp < 0.25) return Biome.Tundra;
     if (temp > 0.72 && moist < 0.35) return Biome.Desert;
@@ -164,9 +184,16 @@ export class VoxelWorld {
     return Biome.Plains;
   }
 
-  /** Generate terrain from terrainY() heightmap with biomes. */
-  generate(): void {
-    const rng = mulberry32(42); // deterministic
+  /** Generate terrain from seeded heightmap with biomes. */
+  generate(seed = 42): void {
+    this.seed = seed;
+    const rng = mulberry32(seed); // deterministic
+
+    // Compute seed-derived offsets for terrain and biome variety
+    this.terrainOffX = rng() * 1000 - 500;
+    this.terrainOffZ = rng() * 1000 - 500;
+    this.biomeOffX = rng() * 1000 - 500;
+    this.biomeOffZ = rng() * 1000 - 500;
 
     // Phase 1: Terrain + biome-aware surface
     for (let bx = 0; bx < WORLD_BLOCKS_X; bx++) {
@@ -175,8 +202,13 @@ export class VoxelWorld {
         const wz = bz * BLOCK_SIZE + BLOCK_SIZE * 0.5 - WORLD_HALF;
         const biome = this.getBiome(bx, bz);
 
-        // Map terrainY into block heights; flatten deserts, deepen swamps
-        let ty = terrainY(wx, wz);
+        // Seeded heightmap — offset world coords so each seed gives different terrain
+        const ox = wx + this.terrainOffX;
+        const oz = wz + this.terrainOffZ;
+        let ty = Math.sin(ox * 0.15) * Math.cos(oz * 0.2) * 1.2
+                + Math.sin(ox * 0.35 + oz * 0.25) * 0.5
+                + Math.sin(ox * 0.7 + oz * 0.5) * 0.2
+                + Math.cos(ox * 0.05) * Math.sin(oz * 0.08) * 1.5;
         if (biome === Biome.Desert) ty *= 0.5; // flatter
         if (biome === Biome.Swamp) ty = ty * 0.3 - 0.5; // low and flat
         if (biome === Biome.Plains) ty *= 0.8; // gentle rolling

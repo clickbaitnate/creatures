@@ -55,6 +55,12 @@ export interface SensesData {
   nearestMonsterIndex: number; // index in MonsterManager arrays
   nearestMonsterType: number;
 
+  // Campfire sensing
+  nearestCampfireAngle: number; // -1 to 1
+  nearestCampfireDist: number;  // 0-1 normalized
+  campfireVisible: boolean;
+  nearestCampfireId: number;
+
   // Crowd sensing
   crowdDensity: number;        // 0-1, capped at 8 neighbors within 12 units
   nearbyFactionCount: number;  // same-faction creatures within 12 units
@@ -106,6 +112,11 @@ export function createSenses(): SensesData {
     nearestMonsterAngle: 0,
     nearestMonsterIndex: -1,
     nearestMonsterType: -1,
+
+    nearestCampfireAngle: 0,
+    nearestCampfireDist: 1,
+    campfireVisible: false,
+    nearestCampfireId: -1,
 
     crowdDensity: 0,
     nearbyFactionCount: 0,

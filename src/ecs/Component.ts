@@ -44,4 +44,8 @@ export class ComponentStorage<T> {
   get size(): number {
     return this.data.size;
   }
+
+  clear(): void {
+    this.data.clear();
+  }
 }

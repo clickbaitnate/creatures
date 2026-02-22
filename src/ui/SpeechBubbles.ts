@@ -17,10 +17,17 @@ interface Label {
   lastY: number;
 }
 
+interface SettlementLabel {
+  factionId: number;
+  element: HTMLDivElement;
+  worldPos: THREE.Vector3;
+}
+
 export class SpeechBubbleManager {
   private container: HTMLDivElement;
   private bubbles: Bubble[] = [];
   private labels = new Map<number, Label>();
+  private settlementLabels = new Map<number, SettlementLabel>();
   private camera: THREE.Camera;
   private renderer: THREE.WebGLRenderer;
 
@@ -86,6 +93,33 @@ export class SpeechBubbleManager {
     }
   }
 
+  setSettlementLabel(factionId: number, name: string, tier: string, emoji: string, worldPos: THREE.Vector3): void {
+    let sl = this.settlementLabels.get(factionId);
+    if (!sl) {
+      const el = document.createElement('div');
+      el.style.cssText = `
+        position:absolute; font-size:10px; color:#fff;
+        text-shadow:0 1px 4px rgba(0,0,0,0.9); transform:translate(-50%,0);
+        white-space:nowrap; pointer-events:none; text-align:center;
+        line-height:1.3; will-change:left,top;
+        transition: left 0.08s linear, top 0.08s linear;
+      `;
+      this.container.appendChild(el);
+      sl = { factionId, element: el, worldPos: worldPos.clone() };
+      this.settlementLabels.set(factionId, sl);
+    }
+    sl.worldPos.copy(worldPos);
+    sl.element.innerHTML = `<span style="font-size:8px;text-transform:uppercase;letter-spacing:1px;opacity:0.7">${tier}</span><br><span style="font-weight:bold">${emoji} ${name}</span>`;
+  }
+
+  removeSettlementLabel(factionId: number): void {
+    const sl = this.settlementLabels.get(factionId);
+    if (sl) {
+      sl.element.remove();
+      this.settlementLabels.delete(factionId);
+    }
+  }
+
   private removeBubble(entityId: number): void {
     const idx = this.bubbles.findIndex(b => b.entityId === entityId);
     if (idx >= 0) {
@@ -144,6 +178,18 @@ export class SpeechBubbleManager {
         } else {
           label.element.style.display = 'none';
         }
+      }
+    }
+
+    // Update settlement labels
+    for (const [, sl] of this.settlementLabels) {
+      const screen = this.worldToScreen(sl.worldPos, width, height, 4.0);
+      if (screen) {
+        sl.element.style.left = screen.x + 'px';
+        sl.element.style.top = screen.y + 'px';
+        sl.element.style.display = '';
+      } else {
+        sl.element.style.display = 'none';
       }
     }
   }

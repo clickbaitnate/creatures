@@ -9,6 +9,9 @@ export const enum Activity {
   Mating = 5,
   Building = 6,
   Gathering = 7,
+  Cooking = 8,
+  Sleeping = 9,
+  Raiding = 10,
 }
 
 export interface SocialData {

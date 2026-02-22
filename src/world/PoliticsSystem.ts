@@ -50,6 +50,14 @@ export class PoliticsSystem {
 
   factionManager: FactionManager | null = null;
   territory: TerritorySystem | null = null;
+  buildingSystem: { getHousingRatio(factionId: number): number } | null = null;
+  raidSystem: import('../systems/RaidSystem').RaidSystem | null = null;
+
+  // Conflict event callbacks for Jachin/Boaz pulse
+  onWarDeclared: ((fA: number, fB: number) => void) | null = null;
+  onPeaceTreaty: ((fA: number, fB: number) => void) | null = null;
+  onAllianceFormed: ((fA: number, fB: number) => void) | null = null;
+  onVassalization: ((overlord: number, vassal: number) => void) | null = null;
 
   tick(world: World): void {
     this.globalTick++;
@@ -143,8 +151,21 @@ export class PoliticsSystem {
     const nd = this.nationData.get(faction.id)!;
     const avg = this.getMemberAverages(faction, world);
 
+    // Housing ratio influences government: communal housing boosts Commune/Democracy
+    const housingRatio = this.buildingSystem?.getHousingRatio(faction.id) ?? 0;
+
     if (avg.count < 5) {
       nd.government = GovernmentType.Tribal;
+    } else if (housingRatio > 0.5 && avg.sociability > 0.4 && avg.aggression < 0.5) {
+      // Communal housing → Commune or Democracy
+      if (avg.monogamy < 0.5) {
+        nd.government = GovernmentType.Commune;
+      } else {
+        nd.government = GovernmentType.Democracy;
+      }
+    } else if (housingRatio < 0.3 && avg.aggression > 0.6) {
+      // Individual housing + high aggression → Autocracy
+      nd.government = GovernmentType.Autocracy;
     } else if (avg.aggression > 0.6) {
       nd.government = GovernmentType.Autocracy;
     } else if (avg.sociability > 0.6 && avg.aggression < 0.4) {
@@ -192,6 +213,8 @@ export class PoliticsSystem {
         ndB.allies.delete(factionA.id);
         // Worsen relations
         this.factionManager.setRelation(factionA.id, factionB.id, clamp(relation - 0.2, -1, 1));
+        // Fire event
+        this.onWarDeclared?.(factionA.id, factionB.id);
       }
     }
 
@@ -216,6 +239,15 @@ export class PoliticsSystem {
         ndA.warExhaustion = Math.max(0, ndA.warExhaustion - 0.3);
         ndB.warExhaustion = Math.max(0, ndB.warExhaustion - 0.3);
         this.factionManager.setRelation(factionA.id, factionB.id, clamp(relation + 0.1, -1, 1));
+        this.onPeaceTreaty?.(factionA.id, factionB.id);
+      } else {
+        // Raid trigger: factions at war, 15% chance, memberCount >= 4, warExhaustion < 0.7
+        if (this.raidSystem && avgA.count >= 4 && ndA.warExhaustion < 0.7 && Math.random() < 0.15) {
+          this.raidSystem.launchRaid(factionA.id, factionB.id, world);
+        }
+        if (this.raidSystem && avgB.count >= 4 && ndB.warExhaustion < 0.7 && Math.random() < 0.15) {
+          this.raidSystem.launchRaid(factionB.id, factionA.id, world);
+        }
       }
     }
 
@@ -228,8 +260,11 @@ export class PoliticsSystem {
         if (ndB.warTargets.has(target)) { sharedEnemy = true; break; }
       }
       if (sharedEnemy || relation > 0.7) {
-        ndA.allies.add(factionB.id);
-        ndB.allies.add(factionA.id);
+        if (!ndA.allies.has(factionB.id)) {
+          ndA.allies.add(factionB.id);
+          ndB.allies.add(factionA.id);
+          this.onAllianceFormed?.(factionA.id, factionB.id);
+        }
       }
     }
 

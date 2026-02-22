@@ -2,11 +2,8 @@ import { System } from '../ecs/System';
 import type { World } from '../ecs/World';
 import { BiochemStore } from '../components/Biochemistry';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
-import { TransformStore } from '../components/Transform';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
-import { POND_CENTER, POND_RADIUS } from '../world/Environment';
-
-const WATER_ENERGY_BONUS = 0.0003;
+import { simStats, DeathCause } from '../stats/SimStats';
 
 export class MetabolismSystem extends System {
   readonly query = BiochemStore.bit | LifecycleStore.bit;
@@ -30,19 +27,10 @@ export class MetabolismSystem extends System {
       // Death checks
       if (chemicals[ChemId.LifeForce] <= 0 || lifecycle.age >= lifecycle.maxAge) {
         lifecycle.stage = LifeStage.Dead;
+        const cause = lifecycle.age >= lifecycle.maxAge ? DeathCause.OldAge : DeathCause.Starvation;
+        simStats.recordDeath(cause, lifecycle.age);
         this.toDestroy.push(id);
         continue;
-      }
-
-      // Water proximity bonus
-      const transform = TransformStore.get(id);
-      if (transform) {
-        const dx = transform.x - POND_CENTER.x;
-        const dz = transform.z - POND_CENTER.y;
-        const distToPond = Math.sqrt(dx * dx + dz * dz);
-        if (distToPond < POND_RADIUS * 2) {
-          chemicals[ChemId.Energy] = Math.min(1, chemicals[ChemId.Energy] + WATER_ENERGY_BONUS);
-        }
       }
 
       // Reproduction cooldown

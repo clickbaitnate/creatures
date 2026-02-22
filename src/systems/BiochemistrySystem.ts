@@ -4,6 +4,7 @@ import { BiochemStore } from '../components/Biochemistry';
 import { GenomeStore } from '../components/Genome';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { InventoryStore, totalItems, MAX_SLOTS, MAX_STACK } from '../components/Inventory';
+import { MotorStore } from '../components/Motor';
 import { ChemId, CHEMICALS } from '../biochemistry/ChemicalRegistry';
 import { clamp } from '../utils/Math';
 import type { SeasonState } from '../world/Seasons';
@@ -24,41 +25,46 @@ export class BiochemistrySystem extends System {
       const { chemicals } = BiochemStore.get(id)!;
       const { genome } = GenomeStore.get(id)!;
 
-      // Stomach: glucose → ATP (generous conversion — doubled cap)
+      // Stomach: glucose → ATP
       if (chemicals[ChemId.Glucose] > 0.01) {
-        const converted = Math.min(chemicals[ChemId.Glucose] * 0.25, genome.stomachRate * 0.2);
+        const converted = Math.min(chemicals[ChemId.Glucose] * 0.25, genome.stomachRate * 0.5);
         chemicals[ChemId.Glucose] -= converted;
-        chemicals[ChemId.ATP] += converted * 1.5;
+        chemicals[ChemId.ATP] += converted;
       }
 
-      // Muscles: ATP → Energy (sustained — tripled rate)
+      // Muscles: ATP → Energy
       if (chemicals[ChemId.ATP] > 0.01) {
-        const burned = genome.muscleRate * 0.04;
+        const burned = genome.muscleRate * 0.08;
         chemicals[ChemId.ATP] -= Math.min(chemicals[ChemId.ATP], burned);
-        chemicals[ChemId.Energy] += burned * 1.0;
+        chemicals[ChemId.Energy] += burned;
       }
 
-      // Passive energy recovery — creatures slowly recover when not starving
-      if (chemicals[ChemId.ATP] > 0.1 && chemicals[ChemId.Energy] < 0.8) {
-        chemicals[ChemId.Energy] += 0.0003;
-      }
+      // Hunger: rises when glucose/energy are low, falls proportional to glucose
+      const hungerRise = (1 - chemicals[ChemId.Glucose]) * 0.0015 + (1 - chemicals[ChemId.Energy]) * 0.001;
+      const hungerFall = 0.001 + chemicals[ChemId.Glucose] * 0.004; // always some fall, more when fed
+      chemicals[ChemId.Hunger] = clamp(chemicals[ChemId.Hunger] + hungerRise - hungerFall, 0, 1);
 
-      // Hunger rises when glucose is low (gentler curve)
-      chemicals[ChemId.Hunger] = clamp(1.0 - chemicals[ChemId.Glucose] * 2.0 - chemicals[ChemId.ATP] * 0.5, 0, 1);
+      // Tiredness accumulates gradually, reduced when sleeping (sleepTimer > 0 handled in InstinctSystem)
+      // Rises slowly over time, faster when ATP is low
+      const tiredRise = 0.0003 + (1 - chemicals[ChemId.ATP]) * 0.0002;
+      chemicals[ChemId.Tiredness] = clamp(chemicals[ChemId.Tiredness] + tiredRise, 0, 1);
 
-      // Tiredness rises when ATP is low
-      chemicals[ChemId.Tiredness] = clamp(1.0 - chemicals[ChemId.ATP] * 3.0, 0, 1);
-
-      // Base metabolism: very gentle energy drain, amplified by season
+      // Base metabolism: energy drain, amplified by season
       const seasonDrain = this.seasonState?.drainMult ?? 1.0;
-      chemicals[ChemId.Energy] -= 0.00008 * seasonDrain;
+      chemicals[ChemId.Energy] -= 0.0002 * seasonDrain;
 
-      // LifeForce only degrades during serious starvation (lower threshold)
+      // Movement energy cost
+      const motor = MotorStore.get(id);
+      if (motor) {
+        chemicals[ChemId.Energy] -= 0.0001 * motor.forward;
+      }
+
+      // LifeForce only degrades during serious starvation
       if (chemicals[ChemId.Energy] < 0.03 && chemicals[ChemId.Glucose] < 0.02) {
-        chemicals[ChemId.LifeForce] -= 0.0005;
+        chemicals[ChemId.LifeForce] -= 0.0002;
       }
       if (chemicals[ChemId.Energy] <= 0 && chemicals[ChemId.ATP] <= 0) {
-        chemicals[ChemId.LifeForce] -= 0.002; // actually starving
+        chemicals[ChemId.LifeForce] -= 0.001; // actually starving
       }
 
       // Scarcity → Anxiety: hunger + low glucose + low energy + empty inventory

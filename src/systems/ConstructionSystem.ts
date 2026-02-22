@@ -16,10 +16,11 @@ import { VocabularyStore, learn } from '../components/Vocabulary';
 import {
   ConstructionSite, getNextUnplacedBlock, getRequiredItem, markPlaced,
 } from '../voxel/Blueprint';
+import type { MiningParticles } from '../creatures/MiningParticles';
 
 const PLACE_COOLDOWN = 15;
-const PLACE_RANGE_SQ = 4.0;
-const MINE_RANGE_SQ = 2.25;
+const PLACE_RANGE_SQ = 1.0;  // Must be within ~1 world unit to place blocks
+const MINE_RANGE_SQ = 0.36;  // Must be touching to mine (~0.6 world units)
 
 interface BuilderState {
   siteId: number;
@@ -56,6 +57,7 @@ export class ConstructionSystem extends System {
 
   voxelWorld: VoxelWorld | null = null;
   sites: ConstructionSite[] = [];
+  miningParticles: MiningParticles | null = null;
 
   update(world: World, _dt: number): void {
     if (!this.voxelWorld) return;
@@ -78,8 +80,9 @@ export class ConstructionSystem extends System {
         continue;
       }
 
-      // Find nearest active site if unassigned
+      // Find nearest active site if unassigned — prefer same-faction sites
       if (builder.siteId < 0) {
+        const myFaction = social?.factionId ?? -1;
         let bestDSq = Infinity;
         let bestSite = -1;
         for (const site of this.sites) {
@@ -89,7 +92,9 @@ export class ConstructionSystem extends System {
             site.originY,
             site.originZ + Math.floor(site.blueprint.depth / 2),
           );
-          const dsq = distSq(transform.x, transform.z, swx, swz);
+          let dsq = distSq(transform.x, transform.z, swx, swz);
+          // Halve effective distance for same-faction sites
+          if (site.factionId >= 0 && site.factionId === myFaction) dsq *= 0.5;
           if (dsq < bestDSq) {
             bestDSq = dsq;
             bestSite = site.id;
@@ -152,6 +157,24 @@ export class ConstructionSystem extends System {
       builder.targetBlock = null;
 
       biochem.chemicals[ChemId.Reward] = clamp(biochem.chemicals[ChemId.Reward] + 0.1, 0, 1);
+
+      // Cooperative reward: placing blocks near same-faction members → +Oxytocin
+      if (social) {
+        const myFaction = social.factionId;
+        for (const otherId of entities) {
+          if (otherId === id) continue;
+          const otherSocial = SocialStore.get(otherId);
+          if (!otherSocial || otherSocial.factionId !== myFaction) continue;
+          const otherT = TransformStore.get(otherId);
+          if (!otherT) continue;
+          if (distSq(transform.x, transform.z, otherT.x, otherT.z) < 36) { // within 6 units
+            biochem.chemicals[ChemId.Reward] = clamp(
+              biochem.chemicals[ChemId.Reward] + 0.02, 0, 1);
+            break; // one bonus per placement
+          }
+        }
+      }
+
       if (social) {
         social.activity = Activity.Building;
         if (Math.random() < 0.2) {
@@ -219,8 +242,11 @@ export class ConstructionSystem extends System {
       const props = BLOCK_PROPS[block];
       if (props.mineYield !== null && hasSpace(inv)) {
         addItem(inv, props.mineYield);
-      } else if (hasSpace(inv)) {
-        addItem(inv, builder.neededItem);
+      }
+      // Spawn break particles
+      if (this.miningParticles) {
+        const [pwx, pwy, pwz] = this.voxelWorld.blockToWorld(mbx, mby, mbz);
+        this.miningParticles.spawnBreakParticles(pwx, pwy, pwz, props.color ?? 0x888888);
       }
       this.voxelWorld.setBlock(mbx, mby, mbz, Block.Air);
       builder.mineTarget = null;
@@ -246,17 +272,23 @@ export class ConstructionSystem extends System {
     if (!this.voxelWorld) return null;
 
     const [cbx, , cbz] = this.voxelWorld.worldToBlock(transform.x, 0, transform.z);
-    const searchRadius = 15;
+    const searchRadius = 2;  // Only adjacent blocks
 
     let bestDSq = Infinity;
     let best: [number, number, number] | null = null;
 
-    for (let dx = -searchRadius; dx <= searchRadius; dx += 2) {
-      for (let dz = -searchRadius; dz <= searchRadius; dz += 2) {
+    for (let dx = -searchRadius; dx <= searchRadius; dx++) {
+      for (let dz = -searchRadius; dz <= searchRadius; dz++) {
         const bx = cbx + dx;
         const bz = cbz + dz;
         const surfY = this.voxelWorld.getHeight(bx, bz);
         if (surfY <= 0) continue;
+
+        const dsq = dx * dx + dz * dz;
+        if (dsq >= bestDSq) continue;
+
+        // Water crossing check: even adjacent blocks can be across a 1-block water gap
+        if (dsq > 0 && this.pathCrossesWater(cbx, cbz, bx, bz)) continue;
 
         for (let dy = 0; dy >= -3; dy--) {
           const by = surfY + dy;
@@ -267,7 +299,6 @@ export class ConstructionSystem extends System {
           if (!props.mineable) continue;
 
           if (props.mineYield === neededItem) {
-            const dsq = dx * dx + dz * dz;
             if (dsq < bestDSq) {
               bestDSq = dsq;
               best = [bx, by, bz];
@@ -278,6 +309,24 @@ export class ConstructionSystem extends System {
       }
     }
     return best;
+  }
+
+  /** Check if path between two block coords crosses water */
+  private pathCrossesWater(x0: number, z0: number, x1: number, z1: number): boolean {
+    if (!this.voxelWorld) return false;
+    const adx = Math.abs(x1 - x0);
+    const adz = Math.abs(z1 - z0);
+    const steps = Math.max(adx, adz, 1);
+    for (let s = 0; s <= steps; s++) {
+      const t = steps > 0 ? s / steps : 0;
+      const mx = Math.round(x0 + (x1 - x0) * t);
+      const mz = Math.round(z0 + (z1 - z0) * t);
+      const h = this.voxelWorld.getHeight(mx, mz);
+      if (this.voxelWorld.getBlock(mx, h, mz) === Block.Water) return true;
+      if (this.voxelWorld.getBlock(mx, h + 1, mz) === Block.Water) return true;
+      if (this.voxelWorld.getBlock(mx, h + 2, mz) === Block.Water) return true;
+    }
+    return false;
   }
 
   cleanup(deadIds: number[]): void {

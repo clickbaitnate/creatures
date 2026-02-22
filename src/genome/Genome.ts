@@ -1,5 +1,6 @@
 import { randFloat, randInt, clamp } from '../utils/Math';
 import { NEURON_COUNT, LOBES, type BrainState, createBrain } from '../brain/CTRNN';
+import { COMBAT_WEIGHTS_IH, COMBAT_BIAS_H, COMBAT_WEIGHTS_HO, COMBAT_BIAS_O } from '../brain/CombatNet';
 
 export const enum EarType { Pointy = 0, Floppy = 1, Round = 2, Antennae = 3 }
 export const enum BodyBuild { Slim = 0, Average = 1, Stocky = 2 }
@@ -76,6 +77,12 @@ export interface CreatureGenome {
 
   // Species marker — used for genetic distance
   speciesMarker: number[];  // 8 float values that drift via mutation
+
+  // Combat neural net weights
+  combatWeightsIH: number[];
+  combatBiasH: number[];
+  combatWeightsHO: number[];
+  combatBiasO: number[];
 
   // Astrology
   birthSign: number;  // ZodiacSign index (0-11), assigned at birth
@@ -189,6 +196,11 @@ export function createDefaultGenome(): CreatureGenome {
     buildingMaterialPref: randFloat(0, 1),
 
     speciesMarker: Array.from({ length: 8 }, () => randFloat(0, 1)),
+
+    combatWeightsIH: Array.from({ length: COMBAT_WEIGHTS_IH }, () => randFloat(-0.3, 0.3)),
+    combatBiasH: Array.from({ length: COMBAT_BIAS_H }, () => randFloat(-0.1, 0.1)),
+    combatWeightsHO: Array.from({ length: COMBAT_WEIGHTS_HO }, () => randFloat(-0.3, 0.3)),
+    combatBiasO: Array.from({ length: COMBAT_BIAS_O }, () => randFloat(-0.1, 0.1)),
 
     birthSign: 0, // set at birth by Zodiac system
   };

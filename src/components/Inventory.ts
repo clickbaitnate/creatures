@@ -32,6 +32,11 @@ export const enum ItemType {
   StoneSword = 33,
   Shield = 34,
   Ship = 35,
+  RawFish = 36,
+  CookedMeat = 37,
+  CookedBerry = 38,
+  CookedFish = 39,
+  LargeMeat = 40,
 }
 
 export const ITEM_NAMES: Partial<Record<ItemType, string>> = {
@@ -65,6 +70,11 @@ export const ITEM_NAMES: Partial<Record<ItemType, string>> = {
   [ItemType.StoneSword]: 'StoneSword',
   [ItemType.Shield]: 'Shield',
   [ItemType.Ship]: 'Ship',
+  [ItemType.RawFish]: 'RawFish',
+  [ItemType.CookedMeat]: 'CookedMeat',
+  [ItemType.CookedBerry]: 'CookedBerry',
+  [ItemType.CookedFish]: 'CookedFish',
+  [ItemType.LargeMeat]: 'LargeMeat',
 };
 
 export const MAX_SLOTS = 6;
@@ -85,9 +95,8 @@ export interface InventoryData {
 export function createInventory(): InventoryData {
   return {
     slots: [
-      { item: ItemType.RawBerry, count: 3 }, // start with food so they can survive
-      { item: ItemType.RawGrass, count: 2 },
-      ...Array.from({ length: MAX_SLOTS - 2 }, () => ({ item: ItemType.None, count: 0 })),
+      { item: ItemType.RawBerry, count: 1 }, // minimal start — must forage to survive
+      ...Array.from({ length: MAX_SLOTS - 1 }, () => ({ item: ItemType.None, count: 0 })),
     ],
     equippedTool: ItemType.None,
     gatherTarget: -1,
@@ -159,9 +168,7 @@ export function hasSpace(inv: InventoryData): boolean {
 /** Check if any food items in inventory */
 export function hasFood(inv: InventoryData): boolean {
   for (const slot of inv.slots) {
-    if (slot.item === ItemType.RawBerry || slot.item === ItemType.RawGrass ||
-        slot.item === ItemType.RawRoot || slot.item === ItemType.RawMeat ||
-        slot.item === ItemType.FoodBundle) return true;
+    if (isFood(slot.item) && slot.count > 0) return true;
   }
   return false;
 }
@@ -178,7 +185,9 @@ export function totalItems(inv: InventoryData): number {
 export function isFood(item: ItemType): boolean {
   return item === ItemType.RawBerry || item === ItemType.RawGrass ||
          item === ItemType.RawRoot || item === ItemType.RawMeat ||
-         item === ItemType.FoodBundle;
+         item === ItemType.FoodBundle || item === ItemType.RawFish ||
+         item === ItemType.CookedMeat || item === ItemType.CookedBerry ||
+         item === ItemType.CookedFish || item === ItemType.LargeMeat;
 }
 
 export function isTool(item: ItemType): boolean {

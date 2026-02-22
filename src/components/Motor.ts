@@ -10,10 +10,24 @@ export interface MotorData {
   wantHunt: boolean;
   wantBuild: boolean;
   wantFightMonster: boolean;
+  wantCook: boolean;
+  wantRevolt: boolean;
+  // Raid movement target
+  raidTargetX: number;
+  raidTargetZ: number;
+  // Stuck detection
+  stuckTimer: number;
+  lastX: number;
+  lastZ: number;
+  // Sleep state
+  sleepTimer: number;     // ticks remaining asleep (0 = awake)
+  wantSleep: boolean;
+  // God Hand
+  godHeld: boolean;       // true while being carried by god hand
 }
 
 export function createMotor(): MotorData {
-  return { forward: 0, turnLeft: 0, turnRight: 0, wantEat: false, wantMate: false, wantGather: false, wantHunt: false, wantBuild: false, wantFightMonster: false };
+  return { forward: 0, turnLeft: 0, turnRight: 0, wantEat: false, wantMate: false, wantGather: false, wantHunt: false, wantBuild: false, wantFightMonster: false, wantCook: false, wantRevolt: false, raidTargetX: 0, raidTargetZ: 0, stuckTimer: 0, lastX: 0, lastZ: 0, sleepTimer: 0, wantSleep: false, godHeld: false };
 }
 
 export const MotorStore = new ComponentStorage<MotorData>();

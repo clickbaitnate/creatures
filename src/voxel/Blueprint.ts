@@ -22,6 +22,7 @@ export interface ConstructionSite {
   placedCount: number;
   progress: number;     // 0-1
   active: boolean;
+  factionId: number;    // owning faction (-1 = unassigned)
 }
 
 function bpIndex(bp: Blueprint, x: number, y: number, z: number): number {
@@ -222,6 +223,42 @@ export function createFarmPlotBlueprint(): Blueprint {
   });
 }
 
+export function createCampfireBlueprint(): Blueprint {
+  // 3x2x3: stone ring with campfire center block
+  return createSmallBlueprint('Campfire', 3, 2, 3, (x, y, z) => {
+    if (y === 0) {
+      // Bottom layer: stone ring around center
+      const edge = x === 0 || x === 2 || z === 0 || z === 2;
+      if (edge) return Block.Stone;
+      return Block.Air; // center clear for campfire above
+    }
+    if (y === 1 && x === 1 && z === 1) {
+      return Block.Campfire;
+    }
+    return Block.Air;
+  });
+}
+
+export function createLonghouseBlueprint(): Blueprint {
+  // 9x5x5: wood walls, plank eave, thatch A-frame roof
+  return createSmallBlueprint('Longhouse', 9, 5, 5, (x, y, z, w, _h, d) => {
+    const edge = x === 0 || x === w - 1 || z === 0 || z === d - 1;
+    if (y === 0) return Block.Cobblestone; // floor
+    if (y < 3 && edge) {
+      // Door at front center
+      if (y <= 1 && x === Math.floor(w / 2) && z === 0) return Block.Air;
+      return Block.Wood;
+    }
+    if (y === 3 && edge) return Block.Plank; // eave
+    if (y >= 3) {
+      // A-frame thatch roof (peaked along center Z-axis)
+      const cz = Math.abs(z - Math.floor(d / 2));
+      if (cz + (y - 3) <= Math.floor(d / 2)) return Block.Thatch;
+    }
+    return Block.Air;
+  });
+}
+
 // All small blueprints for tribe settlement building
 export const SMALL_BLUEPRINTS = [
   createHutBlueprint,
@@ -230,6 +267,8 @@ export const SMALL_BLUEPRINTS = [
   createShrineBlueprint,
   createStoragePitBlueprint,
   createFarmPlotBlueprint,
+  createCampfireBlueprint,
+  createLonghouseBlueprint,
 ];
 
 /** Mutate a blueprint based on genome traits. Small chance per block to add/remove/swap. */

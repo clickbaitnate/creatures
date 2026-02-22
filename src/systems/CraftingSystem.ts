@@ -11,6 +11,9 @@ import { ChemId } from '../biochemistry/ChemicalRegistry';
 import { distSq, clamp } from '../utils/Math';
 import type { VoxelWorld } from '../voxel/VoxelWorld';
 import { Block } from '../voxel/BlockTypes';
+import { BrainStore } from '../components/Brain';
+import { GoalStore, GoalType } from '../components/Goal';
+import { simStats } from '../stats/SimStats';
 
 interface Recipe {
   inputs: [ItemType, number][];
@@ -42,6 +45,14 @@ const RECIPES: Recipe[] = [
   { inputs: [[ItemType.Plank, 3], [ItemType.RawWood, 2]], output: ItemType.Boat, outputCount: 1, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['💧', '🪵'] },
   // Ship: larger vessel
   { inputs: [[ItemType.Plank, 5], [ItemType.RawWood, 3]], output: ItemType.Ship, outputCount: 1, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['💧', '🪵', '⛵'] },
+  // Torch: no table needed
+  { inputs: [[ItemType.Coal, 1], [ItemType.RawWood, 1]], output: ItemType.Torch, outputCount: 2, requiresWorkshop: false, requiresCraftingTable: false, requiredKnowledge: ['🔥', '🪵'] },
+  // Smelting: workshop + crafting table required
+  { inputs: [[ItemType.RawIron, 2], [ItemType.Coal, 1]], output: ItemType.IronIngot, outputCount: 1, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['⛏️', '🔥'] },
+  { inputs: [[ItemType.RawGold, 2], [ItemType.Coal, 1]], output: ItemType.GoldIngot, outputCount: 1, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['⛏️', '🔥'] },
+  // Metal equipment: workshop + crafting table
+  { inputs: [[ItemType.IronIngot, 2], [ItemType.RawWood, 1]], output: ItemType.IronSword, outputCount: 1, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['⚙️', '⚔️'] },
+  { inputs: [[ItemType.IronIngot, 3]], output: ItemType.IronArmor, outputCount: 1, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['⚙️', '🛡️'] },
 ];
 
 const WORKSHOP_RANGE_SQ = 5 * 5;
@@ -120,8 +131,13 @@ export class CraftingSystem extends System {
         }
       }
 
-      // Try recipes based on creativity and randomness
-      if (Math.random() > genome.creativity * 0.02) continue;
+      // Goal-driven crafting gate: brain signal + goal bonus replaces pure RNG
+      const brainData = BrainStore.get(id);
+      const goalData = GoalStore.get(id);
+      const brainCraftSignal = brainData ? Math.max(0, brainData.brain.outputs[56]) : 0;
+      const goalBonus = goalData?.activeGoal === GoalType.CraftTool ? 0.3 : 0;
+      const craftChance = Math.max(genome.creativity * 0.15, brainCraftSignal * 0.4) + goalBonus;
+      if (Math.random() > craftChance) continue;
 
       for (const recipe of RECIPES) {
         if (recipe.requiresWorkshop && !nearWorkshop) continue;
@@ -167,6 +183,10 @@ export class CraftingSystem extends System {
             recipe.output === ItemType.IronSword) {
           inv.equippedTool = recipe.output;
         }
+        if (recipe.output === ItemType.IronArmor) {
+          // IronArmor doesn't replace equipped tool, but creature "wears" it
+          // (future: separate armor slot)
+        }
 
         // Place CraftingTableItem as a CraftingTable block
         if (recipe.output === ItemType.CraftingTableItem && this.voxelWorld) {
@@ -175,7 +195,8 @@ export class CraftingSystem extends System {
         }
 
         biochem.chemicals[ChemId.Reward] = clamp(biochem.chemicals[ChemId.Reward] + 0.15, 0, 1);
-        this.craftTimers.set(id, 100);
+        simStats.recordCraft();
+        this.craftTimers.set(id, 50);
         break;
       }
     }

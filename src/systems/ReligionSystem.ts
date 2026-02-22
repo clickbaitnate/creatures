@@ -10,6 +10,8 @@ import { BiochemStore } from '../components/Biochemistry';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
 import { distSq, clamp } from '../utils/Math';
 import type { FactionManager, Faction } from '../world/FactionSystem';
+import { CultStance } from '../components/Zealotry';
+import { type DivinePowerState, addPower, updatePowerCap } from '../god/DivinePower';
 import type { ResourceGrid, Biome } from '../world/ResourceGrid';
 import {
   PHILOSOPHIES, matchPhilosophy, pick, pickN,
@@ -55,9 +57,11 @@ export class ReligionSystem extends System {
 
   factionManager: FactionManager | null = null;
   grid: ResourceGrid | null = null;
+  divinePower: DivinePowerState | null = null;
   private philTimer = 0;
   private schismTimer = 0;
   private tickCount = 0;
+  private cultCountTimer = 0;
 
   update(world: World, _dt: number): void {
     const entities = world.query(this.query);
@@ -80,6 +84,31 @@ export class ReligionSystem extends System {
       // Zealotry decay when god not present
       if (zealotry.zealotry > 0) {
         zealotry.zealotry = clamp(zealotry.zealotry - zealotry.faithDecay, 0, 1);
+      }
+
+      // Stance-based decay: gradient values slowly drift toward 0
+      zealotry.terror = clamp(zealotry.terror - 0.0005, 0, 1);
+      zealotry.awe = clamp(zealotry.awe - 0.0005, 0, 1);
+      zealotry.devotion = clamp(zealotry.devotion - 0.0003, 0, 1); // devotion decays slower
+      zealotry.rebellion = clamp(zealotry.rebellion - 0.0008, 0, 1); // rebellion fades faster
+      zealotry.displacementStress = clamp(zealotry.displacementStress - 0.001, 0, 1);
+
+      // Divine power generation based on stance
+      if (this.divinePower && zealotry.deity === 0 && zealotry.zealotry > 0) {
+        switch (zealotry.stance) {
+          case CultStance.Devotion:
+            addPower(this.divinePower, 0.002 * zealotry.zealotry);
+            break;
+          case CultStance.Awe:
+            addPower(this.divinePower, 0.001 * zealotry.zealotry);
+            break;
+          case CultStance.Terror:
+            addPower(this.divinePower, 0.0005 * zealotry.zealotry);
+            break;
+          case CultStance.Rebellion:
+            this.divinePower.power = Math.max(0, this.divinePower.power - 0.001 * (1 - zealotry.zealotry));
+            break;
+        }
       }
 
       // High zealotry: morale boost
@@ -172,6 +201,30 @@ export class ReligionSystem extends System {
     if (this.schismTimer >= SCHISM_CHECK_INTERVAL && this.factionManager) {
       this.schismTimer = 0;
       this.checkSchisms(entities);
+    }
+
+    // Update cult stance counts every 500 ticks
+    this.cultCountTimer++;
+    if (this.cultCountTimer >= 500 && this.divinePower) {
+      this.cultCountTimer = 0;
+      let followers = 0, devotees = 0, terrorC = 0, aweC = 0, rebels = 0;
+      for (const id of entities) {
+        const z = ZealotryStore.get(id);
+        if (!z || z.deity !== 0) continue;
+        if (z.zealotry > 0.1) followers++;
+        switch (z.stance) {
+          case CultStance.Devotion: devotees++; break;
+          case CultStance.Terror: terrorC++; break;
+          case CultStance.Awe: aweC++; break;
+          case CultStance.Rebellion: rebels++; break;
+        }
+      }
+      this.divinePower.followerCount = followers;
+      this.divinePower.devoteeCount = devotees;
+      this.divinePower.terrorCount = terrorC;
+      this.divinePower.aweCount = aweC;
+      this.divinePower.rebelCount = rebels;
+      updatePowerCap(this.divinePower);
     }
   }
 

@@ -3,6 +3,7 @@
 
 import { Block, BLOCK_PROPS } from './BlockTypes';
 import { VoxelWorld, CHUNK_W, CHUNK_H, CHUNK_D, BLOCK_SIZE, WORLD_HALF, WORLD_HALF_Y, CHUNKS_X } from './VoxelWorld';
+import { getBlockUV } from './BlockTextures';
 import * as THREE from 'three';
 
 // 6 face directions: +X, -X, +Y, -Y, +Z, -Z
@@ -67,6 +68,7 @@ export function meshChunk(world: VoxelWorld, cx: number, cz: number): ChunkMeshR
   const sPos: number[] = [];
   const sNorm: number[] = [];
   const sCol: number[] = [];
+  const sUv: number[] = [];
   const sIdx: number[] = [];
   let sVert = 0;
 
@@ -127,6 +129,50 @@ export function meshChunk(world: VoxelWorld, cx: number, cz: number): ChunkMeshR
           continue;
         }
 
+        // Sprite blocks: render as two crossed quads (X shape) instead of a cube
+        if (block === Block.Torch || block === Block.Mushroom ||
+            block === Block.Flower || block === Block.TallGrass ||
+            block === Block.Sapling || block === Block.Campfire) {
+          const wx = bx * BLOCK_SIZE - WORLD_HALF;
+          const wy = by * BLOCK_SIZE - WORLD_HALF_Y;
+          const wz2 = bz * BLOCK_SIZE - WORLD_HALF;
+          const BS = BLOCK_SIZE;
+
+          const [u0, v0, u1, v1] = getBlockUV(block, 4); // use 'all' face tile
+          const bright = props.emissive ? 1.3 : 0.9;
+
+          // Two diagonal quads forming an X when viewed from above
+          // Quad 1: corner (0,0)→(1,1) in XZ, full height
+          // Quad 2: corner (1,0)→(0,1) in XZ, full height
+          const quads = [
+            [[wx, wy, wz2], [wx, wy + BS, wz2], [wx + BS, wy + BS, wz2 + BS], [wx + BS, wy, wz2 + BS]],
+            [[wx + BS, wy, wz2], [wx + BS, wy + BS, wz2], [wx, wy + BS, wz2 + BS], [wx, wy, wz2 + BS]],
+          ];
+
+          for (const q of quads) {
+            // Front face
+            for (let vi = 0; vi < 4; vi++) {
+              sPos.push(q[vi][0], q[vi][1], q[vi][2]);
+              sNorm.push(0, 1, 0);
+              sCol.push(bright, bright, bright);
+            }
+            sUv.push(u0, v0, u0, v1, u1, v1, u1, v0);
+            sIdx.push(sVert, sVert + 1, sVert + 2, sVert, sVert + 2, sVert + 3);
+            sVert += 4;
+
+            // Back face (reversed winding so visible from both sides)
+            for (let vi = 0; vi < 4; vi++) {
+              sPos.push(q[vi][0], q[vi][1], q[vi][2]);
+              sNorm.push(0, 1, 0);
+              sCol.push(bright, bright, bright);
+            }
+            sUv.push(u1, v0, u1, v1, u0, v1, u0, v0);
+            sIdx.push(sVert + 2, sVert + 1, sVert, sVert + 3, sVert + 2, sVert);
+            sVert += 4;
+          }
+          continue;
+        }
+
         // Solid block: emit faces as before
         for (let f = 0; f < 6; f++) {
           const d = DIRS[f];
@@ -142,15 +188,15 @@ export function meshChunk(world: VoxelWorld, cx: number, cz: number): ChunkMeshR
             const wy = by * BLOCK_SIZE - WORLD_HALF_Y;
             const wz2 = bz * BLOCK_SIZE - WORLD_HALF;
 
-            const r = ((props.color >> 16) & 0xFF) / 255;
-            const g = ((props.color >> 8) & 0xFF) / 255;
-            const b = (props.color & 0xFF) / 255;
-
             let faceBright = 1.0;
             if (f === 2) faceBright = 1.0;
             else if (f === 3) faceBright = 0.6;
             else if (f === 0 || f === 1) faceBright = 0.8;
             else faceBright = 0.85;
+
+            const [u0, v0, u1, v1] = getBlockUV(block, f);
+            // UV corners: v0=BL, v1=TL, v2=TR, v3=BR (matching CCW winding)
+            const uvs: [number, number][] = [[u0, v0], [u0, v1], [u1, v1], [u1, v0]];
 
             for (let vi = 0; vi < 4; vi++) {
               const v = fv[vi];
@@ -163,7 +209,9 @@ export function meshChunk(world: VoxelWorld, cx: number, cz: number): ChunkMeshR
 
               const ao = getAO(world, bx, by, bz, f, vi);
               const bright = faceBright * ao;
-              sCol.push(r * bright, g * bright, b * bright);
+              sCol.push(bright, bright, bright);
+
+              sUv.push(uvs[vi][0], uvs[vi][1]);
             }
 
             sIdx.push(sVert, sVert + 1, sVert + 2, sVert, sVert + 2, sVert + 3);
@@ -180,6 +228,7 @@ export function meshChunk(world: VoxelWorld, cx: number, cz: number): ChunkMeshR
     solidGeo.setAttribute('position', new THREE.Float32BufferAttribute(sPos, 3));
     solidGeo.setAttribute('normal', new THREE.Float32BufferAttribute(sNorm, 3));
     solidGeo.setAttribute('color', new THREE.Float32BufferAttribute(sCol, 3));
+    solidGeo.setAttribute('uv', new THREE.Float32BufferAttribute(sUv, 2));
     solidGeo.setIndex(sIdx);
   }
 

@@ -119,6 +119,11 @@ export class MonsterManager {
         const dz = creatureZ[c] - this.z[i];
         let dsq = dx * dx + dz * dz;
 
+        // Loner bonus: all monsters target loners more (appear closer)
+        if (creatureCrowd[c] < 0.15) {
+          dsq *= 0.5;
+        }
+
         // Spiders prefer loners
         if (mType === MonsterType.GiantSpider) {
           dsq *= (0.3 + creatureCrowd[c]);
@@ -152,8 +157,38 @@ export class MonsterManager {
         }
       }
 
-      this.x[i] += this.vx[i];
-      this.z[i] += this.vz[i];
+      // Apply movement with water avoidance
+      const newMX = this.x[i] + this.vx[i];
+      const newMZ = this.z[i] + this.vz[i];
+
+      if (voxelWorld && voxelWorld.isWaterAt(newMX, newMZ)) {
+        // Would enter water — try to steer around
+        // Try perpendicular directions
+        const perpX = this.x[i] + this.vz[i];
+        const perpZ = this.z[i] - this.vx[i];
+        if (!voxelWorld.isWaterAt(perpX, perpZ)) {
+          this.x[i] = perpX;
+          this.z[i] = perpZ;
+          // Update velocity to new direction
+          const tmpVx = this.vz[i];
+          this.vz[i] = -this.vx[i];
+          this.vx[i] = tmpVx;
+        } else {
+          // Try other perpendicular
+          const perpX2 = this.x[i] - this.vz[i];
+          const perpZ2 = this.z[i] + this.vx[i];
+          if (!voxelWorld.isWaterAt(perpX2, perpZ2)) {
+            this.x[i] = perpX2;
+            this.z[i] = perpZ2;
+            this.vx[i] = -this.vz[i];
+            this.vz[i] = this.vx[i];
+          }
+          // else: stuck, don't move this tick
+        }
+      } else {
+        this.x[i] = newMX;
+        this.z[i] = newMZ;
+      }
 
       // Keep in bounds
       const halfBound = WORLD_HALF - 2;

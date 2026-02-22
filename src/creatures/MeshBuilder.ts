@@ -241,25 +241,175 @@ export function buildCreatureMesh(genome: CreatureGenome): MeshBuildResult {
   return { group, uniforms };
 }
 
-/** Attach a small colored box to the right hand representing equipped tool/weapon */
+// Shared materials for tools (reused across all creatures)
+const HANDLE_MAT = new THREE.MeshStandardMaterial({ color: 0x8B5A2B, roughness: 0.8, flatShading: true });
+const STONE_MAT = new THREE.MeshStandardMaterial({ color: 0x808080, roughness: 0.6, flatShading: true });
+const METAL_MAT = new THREE.MeshStandardMaterial({ color: 0xC0C0C0, roughness: 0.4, flatShading: true });
+const WOOD_BLADE_MAT = new THREE.MeshStandardMaterial({ color: 0x8B5A2B, roughness: 0.7, flatShading: true });
+const IRON_MAT = new THREE.MeshStandardMaterial({ color: 0xD0D0D0, roughness: 0.35, flatShading: true });
+const SHIELD_MAT = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.6, flatShading: true });
+const FLAME_MAT = new THREE.MeshStandardMaterial({ color: 0xFF8800, emissive: 0xFF6600, emissiveIntensity: 1.5, roughness: 0.9, flatShading: true });
+
+function buildToolMesh(toolType: ItemType): THREE.Group {
+  const tool = new THREE.Group();
+
+  switch (toolType) {
+    case ItemType.StoneAxe:
+    case ItemType.MetalAxe: {
+      const bladeMat = toolType === ItemType.MetalAxe ? METAL_MAT : STONE_MAT;
+      // Handle
+      const handle = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.22, 0.03), HANDLE_MAT);
+      handle.position.y = 0;
+      tool.add(handle);
+      // Blade offset to side at top
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.02), bladeMat);
+      blade.position.set(0.05, 0.09, 0);
+      tool.add(blade);
+      tool.rotation.x = -0.3;
+      break;
+    }
+    case ItemType.StonePick:
+    case ItemType.MetalPick: {
+      const headMat = toolType === ItemType.MetalPick ? METAL_MAT : STONE_MAT;
+      // Handle
+      const handle = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.22, 0.03), HANDLE_MAT);
+      tool.add(handle);
+      // Horizontal head (T-shape)
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.03, 0.03), headMat);
+      head.position.y = 0.1;
+      tool.add(head);
+      // Left point
+      const ptL = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.06, 0.02), headMat);
+      ptL.position.set(-0.06, 0.08, 0);
+      ptL.rotation.z = 0.4;
+      tool.add(ptL);
+      // Right point
+      const ptR = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.06, 0.02), headMat);
+      ptR.position.set(0.06, 0.08, 0);
+      ptR.rotation.z = -0.4;
+      tool.add(ptR);
+      tool.rotation.x = -0.3;
+      break;
+    }
+    case ItemType.WoodSword: {
+      const handle = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.06, 0.03), HANDLE_MAT);
+      handle.position.y = -0.03;
+      tool.add(handle);
+      const guard = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 0.03), HANDLE_MAT);
+      guard.position.y = 0.01;
+      tool.add(guard);
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.2, 0.02), WOOD_BLADE_MAT);
+      blade.position.y = 0.12;
+      tool.add(blade);
+      break;
+    }
+    case ItemType.StoneSword: {
+      const handle = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.06, 0.03), HANDLE_MAT);
+      handle.position.y = -0.03;
+      tool.add(handle);
+      const guard = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 0.03), STONE_MAT);
+      guard.position.y = 0.01;
+      tool.add(guard);
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.2, 0.02), STONE_MAT);
+      blade.position.y = 0.12;
+      tool.add(blade);
+      break;
+    }
+    case ItemType.IronSword: {
+      const handle = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.06, 0.03), HANDLE_MAT);
+      handle.position.y = -0.03;
+      tool.add(handle);
+      const guard = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 0.03), IRON_MAT);
+      guard.position.y = 0.01;
+      tool.add(guard);
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.22, 0.02), IRON_MAT);
+      blade.position.y = 0.13;
+      tool.add(blade);
+      break;
+    }
+    case ItemType.Torch: {
+      const stick = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.18, 0.025), HANDLE_MAT);
+      tool.add(stick);
+      const flame = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 0.04), FLAME_MAT);
+      flame.position.y = 0.12;
+      tool.add(flame);
+      const light = new THREE.PointLight(0xFFAA33, 0.3, 3);
+      light.position.y = 0.14;
+      tool.add(light);
+      break;
+    }
+    case ItemType.Shield: {
+      const face = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 0.02), SHIELD_MAT);
+      tool.add(face);
+      // Metal rim accent
+      const rim = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.025), METAL_MAT);
+      rim.position.z = 0.005;
+      tool.add(rim);
+      tool.rotation.x = -0.2;
+      break;
+    }
+    default: {
+      // Fallback: simple colored box
+      const color = TOOL_COLORS[toolType] ?? 0x888888;
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, flatShading: true });
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.15, 0.04), mat);
+      tool.add(mesh);
+      break;
+    }
+  }
+
+  return tool;
+}
+
+/** Attach tool mesh to creature's hand. Shield goes on left hand, weapons on right. */
 export function attachToolMesh(group: THREE.Group, toolType: ItemType): void {
-  // Remove existing tool mesh
+  // Remove existing tool mesh (but not shield)
   const existing = group.getObjectByName('equippedTool');
   if (existing) group.remove(existing);
 
   if (toolType === ItemType.None) return;
 
-  const color = TOOL_COLORS[toolType] ?? 0x888888;
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, flatShading: true });
+  // Shield goes on left hand
+  if (toolType === ItemType.Shield) {
+    // Remove old shield if any
+    const oldShield = group.getObjectByName('equippedShield');
+    if (oldShield) group.remove(oldShield);
 
-  // Find handR position
+    const handL = group.getObjectByName('handL');
+    if (!handL) return;
+    const shieldGroup = buildToolMesh(ItemType.Shield);
+    shieldGroup.name = 'equippedShield';
+    shieldGroup.position.copy(handL.position);
+    shieldGroup.position.y += 0.06;
+    shieldGroup.position.x -= 0.04;
+    group.add(shieldGroup);
+    return;
+  }
+
   const handR = group.getObjectByName('handR');
   if (!handR) return;
 
-  const toolGeo = new THREE.BoxGeometry(0.04, 0.15, 0.04);
-  const toolMesh = new THREE.Mesh(toolGeo, mat);
-  toolMesh.name = 'equippedTool';
-  toolMesh.position.copy(handR.position);
-  toolMesh.position.y += 0.06;
-  group.add(toolMesh);
+  const toolGroup = buildToolMesh(toolType);
+  toolGroup.name = 'equippedTool';
+  toolGroup.position.copy(handR.position);
+  toolGroup.position.y += 0.06;
+  group.add(toolGroup);
+}
+
+/** Attach or remove shield independently of main weapon */
+export function attachShieldMesh(group: THREE.Group, hasShield: boolean): void {
+  const oldShield = group.getObjectByName('equippedShield');
+  if (oldShield) group.remove(oldShield);
+
+  if (!hasShield) return;
+
+  const handL = group.getObjectByName('handL');
+  if (!handL) return;
+
+  const shieldGroup = buildToolMesh(ItemType.Shield);
+  shieldGroup.name = 'equippedShield';
+  shieldGroup.position.copy(handL.position);
+  shieldGroup.position.y += 0.06;
+  shieldGroup.position.x -= 0.04;
+  group.add(shieldGroup);
 }

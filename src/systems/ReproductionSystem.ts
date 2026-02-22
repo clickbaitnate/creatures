@@ -17,6 +17,8 @@ import { crossover } from '../genome/Crossover';
 import { mutate } from '../genome/Mutation';
 import { terrainY } from '../world/Environment';
 import { VocabularyStore, learn } from '../components/Vocabulary';
+import { DiaryStore, addDiaryEntry, DiaryEventType } from '../components/Diary';
+import type { HierarchySystem } from '../world/HierarchySystem';
 
 const MATE_RANGE_SQ = 3.0 * 3.0;
 const REPRODUCTION_COOLDOWN = 150;
@@ -37,6 +39,7 @@ export class ReproductionSystem extends System {
 
   onSpawn: SpawnCallback | null = null;
   scene: SceneRef | null = null;
+  hierarchySystem: HierarchySystem | null = null;
 
   private hearts: { mesh: THREE.Mesh; timer: number }[] = [];
   private heartGeo = new THREE.ShapeGeometry(this.makeHeartShape());
@@ -197,7 +200,7 @@ export class ReproductionSystem extends System {
           const maleHealth = SocialStore.get(maleId)?.health ?? 1;
           const maleEnergy = maleBiochem.chemicals[ChemId.Energy];
           const colorMatch = 1.0 - Math.abs(maleGenome.colorH - femaleGenome.colorH) / 360;
-          const rank = 0; // Wired in Sprint 3
+          const rank = this.hierarchySystem?.getRank(maleId) ?? 0;
           const attractiveness = maleGenome.displayIntensity * 0.3 + maleHealth * 0.2 +
                                  maleEnergy * 0.2 + rank * 0.2 + colorMatch * 0.1;
           maleMating.attractiveness = attractiveness;
@@ -233,6 +236,16 @@ export class ReproductionSystem extends System {
             femaleMating.bondedPartner = maleId;
             femaleMating.bondStrength = bondStr;
           }
+
+          // Diary: mating
+          const mDiary = DiaryStore.get(maleId);
+          const fDiary = DiaryStore.get(femaleId);
+          if (mDiary) addDiaryEntry(mDiary, 0, DiaryEventType.Mated, {
+            otherId: femaleId, otherName: femaleSocial?.name ?? '',
+          });
+          if (fDiary) addDiaryEntry(fDiary, 0, DiaryEventType.Mated, {
+            otherId: maleId, otherName: maleSocial?.name ?? '',
+          });
 
           // Mating visuals
           if (maleSocial) {

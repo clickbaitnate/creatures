@@ -33,11 +33,71 @@ export interface EventRecord {
   data: Record<string, any>;
 }
 
+export interface GodActionRecord {
+  tick: number;
+  entityId: number;
+  originX: number;
+  originZ: number;
+  dropX: number;
+  dropZ: number;
+  originBiome: number;
+  dropBiome: number;
+  distance: number;
+  preZealotry: number;
+  postZealotry: number;
+  stance: number;
+  witnessCount: number;
+  powerCost: number;
+}
+
+export interface MarketRecord {
+  tick: number;
+  buyerFaction: number;
+  sellerFaction: number;
+  itemGiven: number;
+  itemReceived: number;
+  priceIndex: number;
+}
+
+export interface ConflictRecord {
+  tick: number;
+  type: 'war_declared' | 'peace_treaty' | 'raid' | 'raid_failed' | 'revolution' | 'revolution_failed' | 'alliance' | 'vassalization' | 'absorption';
+  factionA: number;
+  factionB: number;
+  casualties: number;
+  territoryChange: number;
+  lootValue: number;
+}
+
+export interface TerritoryRecord {
+  tick: number;
+  factionId: number;
+  cells: number;
+  gerrymanderScore: number;
+  contestedCells: number;
+}
+
+export interface DialecticRecord {
+  tick: number;
+  factionId: number;
+  thesis: number;
+  antithesis: number;
+  synthesis: number;
+  oppressionRatio: number;
+  jachinAmplitude: number;
+  boazAmplitude: number;
+}
+
 export class DataLogger {
   tickRecords: TickRecord[] = [];
   epochRecords: EpochRecord[] = [];
   deathRecords: DeathRecord[] = [];
   events: EventRecord[] = [];
+  godActions: GodActionRecord[] = [];
+  marketRecords: MarketRecord[] = [];
+  conflictRecords: ConflictRecord[] = [];
+  territoryRecords: TerritoryRecord[] = [];
+  dialecticRecords: DialecticRecord[] = [];
 
   private tickCounter = 0;
   private epochCounter = 0;
@@ -48,13 +108,37 @@ export class DataLogger {
   recordDeath(record: DeathRecord): void {
     this.deathCount++;
     this.deathRecords.push(record);
-    // Keep manageable size
     if (this.deathRecords.length > 5000) this.deathRecords.shift();
   }
 
   recordEvent(tick: number, type: string, data: Record<string, any>): void {
     this.events.push({ tick, type, data });
     if (this.events.length > 10000) this.events.shift();
+  }
+
+  recordGodAction(record: GodActionRecord): void {
+    this.godActions.push(record);
+    if (this.godActions.length > 5000) this.godActions.shift();
+  }
+
+  recordMarket(record: MarketRecord): void {
+    this.marketRecords.push(record);
+    if (this.marketRecords.length > 10000) this.marketRecords.shift();
+  }
+
+  recordConflict(record: ConflictRecord): void {
+    this.conflictRecords.push(record);
+    if (this.conflictRecords.length > 5000) this.conflictRecords.shift();
+  }
+
+  recordTerritory(record: TerritoryRecord): void {
+    this.territoryRecords.push(record);
+    if (this.territoryRecords.length > 5000) this.territoryRecords.shift();
+  }
+
+  recordDialectic(record: DialecticRecord): void {
+    this.dialecticRecords.push(record);
+    if (this.dialecticRecords.length > 5000) this.dialecticRecords.shift();
   }
 
   tickLog(tick: number, population: number, avgEnergy: number, avgHunger: number, zodiacSign: number): void {
@@ -91,11 +175,19 @@ export class DataLogger {
         epochRecordCount: this.epochRecords.length,
         deathRecordCount: this.deathRecords.length,
         eventCount: this.events.length,
+        marketRecordCount: this.marketRecords.length,
+        conflictRecordCount: this.conflictRecords.length,
+        territoryRecordCount: this.territoryRecords.length,
+        dialecticRecordCount: this.dialecticRecords.length,
       },
       timeseries: this.tickRecords,
       epochs: this.epochRecords,
       deaths: this.deathRecords,
       events: this.events,
+      market: this.marketRecords,
+      conflicts: this.conflictRecords,
+      territory: this.territoryRecords,
+      dialectic: this.dialecticRecords,
     }, null, 2);
   }
 

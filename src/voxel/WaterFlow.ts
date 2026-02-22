@@ -1,5 +1,6 @@
 // Cellular automata water flow system for canals.
 // Runs every 20 ticks, max 200 block updates per tick.
+// Water at or below SEA_LEVEL is treated as infinite source (ocean/lake) and won't drain.
 
 import { VoxelWorld, SEA_LEVEL } from './VoxelWorld';
 import { Block } from './BlockTypes';
@@ -44,15 +45,13 @@ export class WaterFlow {
       const bx = parseInt(bxStr);
       const bz = parseInt(bzStr);
 
-      // Process this column
-      const height = this.world.getHeight(bx, bz);
-
       // Look for water blocks in this column that can flow
-      for (let by = SEA_LEVEL + 5; by >= 1; by--) {
+      // Only process water ABOVE sea level — sea-level water is infinite/permanent
+      for (let by = SEA_LEVEL + 5; by > SEA_LEVEL; by--) {
         const block = this.world.getBlock(bx, by, bz);
         if (block !== Block.Water) continue;
 
-        // Gravity: water falls into air below
+        // Gravity: water falls into air below (only above sea level)
         const below = this.world.getBlock(bx, by - 1, bz);
         if (below === Block.Air) {
           this.world.setBlock(bx, by, bz, Block.Air);
@@ -64,7 +63,7 @@ export class WaterFlow {
 
         // Lateral spread: water spreads to adjacent air at same level
         // Only if there's water above (source) or at sea level
-        const hasSource = by <= SEA_LEVEL || this.world.getBlock(bx, by + 1, bz) === Block.Water;
+        const hasSource = by <= SEA_LEVEL + 1 || this.world.getBlock(bx, by + 1, bz) === Block.Water;
         if (hasSource) {
           const neighbors: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
           for (const [dx, dz] of neighbors) {
@@ -80,6 +79,25 @@ export class WaterFlow {
                 this.markDirty(nx, nz);
               }
             }
+          }
+        }
+      }
+
+      // Sea-level water regeneration: if mining created a gap at/below sea level,
+      // refill it with water (infinite ocean source)
+      for (let by = 1; by < SEA_LEVEL; by++) {
+        const block = this.world.getBlock(bx, by, bz);
+        if (block === Block.Air) {
+          // Check if there's water adjacent (ocean/lake nearby)
+          const hasWaterNeighbor =
+            this.world.getBlock(bx + 1, by, bz) === Block.Water ||
+            this.world.getBlock(bx - 1, by, bz) === Block.Water ||
+            this.world.getBlock(bx, by + 1, bz) === Block.Water ||
+            this.world.getBlock(bx, by, bz + 1) === Block.Water ||
+            this.world.getBlock(bx, by, bz - 1) === Block.Water;
+          if (hasWaterNeighbor) {
+            this.world.setBlock(bx, by, bz, Block.Water);
+            updates++;
           }
         }
       }

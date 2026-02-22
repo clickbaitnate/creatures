@@ -3,12 +3,15 @@ import type { World } from '../ecs/World';
 import { TransformStore } from '../components/Transform';
 import { RenderableStore } from '../components/Renderable';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
+import { MotorStore } from '../components/Motor';
 import { FoodStore } from './SensorySystem';
+import type { GodHand } from '../ui/GodHand';
 
 export class RenderSystem extends System {
   readonly query = TransformStore.bit | RenderableStore.bit;
   readonly priority = 100;
 
+  godHand: GodHand | null = null;
   private deadTimers = new Map<number, number>();
   private baseScales = new Map<number, number>();
 
@@ -30,6 +33,26 @@ export class RenderSystem extends System {
       object.position.x = transform.x;
       object.position.z = transform.z;
       object.rotation.y = transform.rotation;
+
+      // God Hand: override position for held creature
+      const motor = MotorStore.get(id);
+      if (motor?.godHeld && this.godHand?.isCarrying && this.godHand.heldEntityId === id) {
+        // Cache base scale on first frame
+        if (object.userData.godBaseScale === undefined) {
+          object.userData.godBaseScale = object.scale.x;
+        }
+        const dp = this.godHand.dragWorldPos;
+        object.position.x = dp.x;
+        object.position.y = dp.y + 2.0 + Math.sin(time * 2) * 0.3; // float above ground
+        object.position.z = dp.z;
+        object.rotation.y += 0.02; // slow spin
+        object.scale.setScalar(object.userData.godBaseScale * 1.15);
+        continue;
+      } else if (object.userData.godBaseScale !== undefined) {
+        // Restore scale after drop
+        object.scale.setScalar(object.userData.godBaseScale);
+        delete object.userData.godBaseScale;
+      }
 
       // Food items are simple, no lifecycle
       if (FoodStore.has(id)) {

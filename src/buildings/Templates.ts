@@ -62,15 +62,84 @@ const O = BlockType.Ore;
 const D = BlockType.Dirt;
 const L = BlockType.Leaf;
 
-// Shelter: 3×3×3 wood frame + thatch roof
-const SHELTER = template(3, 4, 3, (x, y, z) => {
-  if (y === 0) return P; // floor
-  if (y === 3) return T; // roof
-  if (y < 3 && (x === 0 || x === 2) && (z === 0 || z === 2)) return W; // pillars
-  if (y === 1 && z === 1 && x === 1) return A; // open center
-  if (y === 2 && x === 1 && z === 0) return G; // glass window front
+// Campfire: 3×3×3 stone ring + fire center + sticks
+const CAMPFIRE = template(3, 3, 3, (x, y, z) => {
+  // Stone ring on ground (y=0 perimeter)
+  if (y === 0 && !(x === 1 && z === 1)) return S;
+  // Fire block at center
+  if (y === 1 && x === 1 && z === 1) return BlockType.Fire;
+  // Wood sticks leaning in
+  if (y === 1 && x === 0 && z === 0) return W;
+  if (y === 1 && x === 2 && z === 2) return W;
   return A;
 });
+
+// Teepee: 5×5×5 conical shelter
+const TEEPEE = template(5, 5, 5, (x, y, z) => {
+  const cx = 2, cz = 2;
+  const dx = Math.abs(x - cx), dz = Math.abs(z - cz);
+  const dist = Math.max(dx, dz);
+
+  // Ground poles at perimeter corners
+  if (y === 0 && dist === 2 && (dx + dz) >= 3) return W;
+
+  // Thatch walls at y=1-2 on cardinal faces (not corners, not center)
+  if ((y === 1 || y === 2) && dist === 2 && (dx === 0 || dz === 0)) {
+    // Door opening at front: z=0, x=2
+    if (z === 0 && x === cx && y === 1) return A;
+    return T;
+  }
+
+  // Narrowing walls at y=2: inner ring
+  if (y === 2 && dist === 1 && (dx === 0 || dz === 0)) return T;
+
+  // Converging poles at y=3
+  if (y === 3 && dist === 1 && (dx + dz) === 1) return W;
+
+  // Wood peak
+  if (y === 4 && x === cx && z === cz) return W;
+
+  return A;
+});
+
+// Longhouse: 9×4×5 communal structure
+const LONGHOUSE = template(9, 4, 5, (x, y, z) => {
+  const maxX = 8, maxZ = 4;
+  const isCorner = (x === 0 || x === maxX) && (z === 0 || z === maxZ);
+  const isSideWall = (z === 0 || z === maxZ) && x > 0 && x < maxX;
+  const isEndWall = (x === 0 || x === maxX) && z > 0 && z < maxZ;
+  const isDoorEnd = (x === 0 || x === maxX) && z === 2;
+  const isFramePost = isCorner || ((x === 2 || x === 4 || x === 6) && (z === 0 || z === maxZ));
+
+  // Wood frame posts at y=0
+  if (y === 0 && isFramePost) return W;
+  // Plank floor
+  if (y === 0 && z > 0 && z < maxZ && x > 0 && x < maxX) return P;
+
+  // Plank side walls y=1-2
+  if ((y === 1 || y === 2) && isSideWall) return P;
+  // Frame posts at y=1-2
+  if ((y === 1 || y === 2) && isFramePost) return W;
+  // End walls (with door openings)
+  if ((y === 1 || y === 2) && isEndWall && !isDoorEnd) return P;
+  // Door openings at both ends (z=2, y=1)
+  if (y === 1 && isDoorEnd) return A;
+
+  // Thatch A-frame roof at y=3: ridge along center z=2
+  if (y === 3) {
+    // Ridge beam
+    if (z === 2 && x > 0 && x < maxX) return W;
+    // Sloping roof sides
+    if ((z === 1 || z === 3) && x > 0 && x < maxX) return T;
+    // Eaves
+    if ((z === 0 || z === maxZ) && x > 0 && x < maxX) return T;
+  }
+
+  return A;
+});
+
+// Shelter kept as alias for Teepee
+const SHELTER = TEEPEE;
 
 // Wall: 5×3×1 stone/cobble wall segment
 const WALL = template(5, 3, 1, (x, y, _z) => {
@@ -153,4 +222,6 @@ export const BUILDING_TEMPLATES: Record<BuildingType, VoxelTemplate> = {
   [BuildingType.Workshop]:  WORKSHOP,
   [BuildingType.Granary]:   GRANARY,
   [BuildingType.Tower]:     TOWER,
+  [BuildingType.Campfire]:  CAMPFIRE,
+  [BuildingType.Longhouse]: LONGHOUSE,
 };

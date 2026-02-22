@@ -1,5 +1,5 @@
 // Game UI: sleek dark glass panels with creature navigation, stats, and faction info.
-// Replaces the old monospace HUD overlay.
+// Tabbed right panel: Overview | Items | Diary | Social
 
 import type { World } from '../ecs/World';
 import { TransformStore } from '../components/Transform';
@@ -11,6 +11,9 @@ import { ExpressionStore } from '../components/Expression';
 import { InventoryStore, ITEM_NAMES, ItemType } from '../components/Inventory';
 import { VocabularyStore } from '../components/Vocabulary';
 import { MemoryStore, MEMORY_SLOTS } from '../components/Memory';
+import { MatingStore } from '../components/Mating';
+import { DiaryStore } from '../components/Diary';
+import { renderDiary, type RenderedDiaryEntry } from './DiaryRenderer';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
 import { getBreedLabel } from '../genome/Genome';
 import type { FactionManager, Faction } from '../world/FactionSystem';
@@ -20,6 +23,7 @@ import type { HierarchySystem } from '../world/HierarchySystem';
 import type { DayNightState } from '../world/DayNightCycle';
 import type { SeasonState } from '../world/Seasons';
 import { SEASON_NAMES } from '../world/Seasons';
+import { simStats } from '../stats/SimStats';
 
 // ── CSS Injection ─────────────────────────────────────────────
 
@@ -145,6 +149,12 @@ const CSS = `
   background: rgba(255, 255, 255, 0.06);
 }
 
+.faction-card.active {
+  background: rgba(80, 140, 220, 0.15);
+  border-left-color: rgba(80, 160, 255, 0.8) !important;
+  box-shadow: inset 0 0 8px rgba(80, 160, 255, 0.1);
+}
+
 .faction-name {
   font-weight: 600;
   font-size: 11px;
@@ -174,12 +184,27 @@ const CSS = `
   background: rgba(255, 255, 255, 0.04);
 }
 
+.faction-filter-clear {
+  padding: 3px 8px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  background: rgba(80, 140, 220, 0.2);
+  color: rgba(120, 180, 255, 0.9);
+  font-size: 9px;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s;
+}
+.faction-filter-clear:hover {
+  background: rgba(80, 140, 220, 0.35);
+}
+
 /* ── Right Panel: Selected Creature ── */
 #gui-creature {
   position: absolute;
   top: 70px;
   right: 12px;
-  width: 260px;
+  width: 270px;
   max-height: calc(100vh - 170px);
   overflow-y: auto;
   padding: 14px;
@@ -219,7 +244,38 @@ const CSS = `
 .creature-subtitle {
   font-size: 10px;
   color: rgba(255, 255, 255, 0.4);
+  margin-bottom: 8px;
+}
+
+/* ── Tab Bar ── */
+.tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid rgba(80, 120, 160, 0.15);
   margin-bottom: 10px;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 5px 4px;
+  text-align: center;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+}
+
+.tab-btn:hover {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.tab-btn.active {
+  color: rgba(120, 180, 255, 0.9);
+  border-bottom: 2px solid rgba(80, 160, 255, 0.6);
 }
 
 .stat-section {
@@ -369,6 +425,70 @@ const CSS = `
   font-weight: 600;
   background: rgba(239, 68, 68, 0.15);
   color: rgba(255, 180, 180, 0.9);
+}
+
+/* ── Diary ── */
+.diary-scroll {
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.diary-scroll::-webkit-scrollbar {
+  width: 3px;
+}
+.diary-scroll::-webkit-scrollbar-thumb {
+  background: rgba(100, 160, 220, 0.3);
+  border-radius: 2px;
+}
+
+.diary-entry {
+  padding: 3px 6px;
+  margin-bottom: 2px;
+  border-left: 2px solid rgba(255, 255, 255, 0.1);
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.55);
+  line-height: 1.4;
+}
+.diary-entry.trade { border-left-color: rgba(245, 158, 11, 0.6); }
+.diary-entry.combat { border-left-color: rgba(239, 68, 68, 0.6); }
+.diary-entry.social { border-left-color: rgba(168, 85, 247, 0.6); }
+.diary-entry.life { border-left-color: rgba(34, 197, 94, 0.6); }
+
+/* ── Lifetime Stats ── */
+.lifetime-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 8px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+.lifetime-stat {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+}
+.lifetime-stat .label { color: rgba(255, 255, 255, 0.4); }
+.lifetime-stat .val {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* ── Trade Rows ── */
+.trade-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.5);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+.trade-arrow {
+  color: rgba(245, 158, 11, 0.7);
+  font-weight: 600;
 }
 
 /* ── Bottom Strip: Creature Nav ── */
@@ -526,7 +646,19 @@ const ACTIVITY_LABELS: Record<number, string> = {
   4: 'Fighting', 5: 'Mating', 6: 'Building', 7: 'Gathering',
 };
 
+type TabId = 'overview' | 'items' | 'diary' | 'social';
+
 // ── GameUI Class ──────────────────────────────────────────────
+
+export interface DivinePowerInfo {
+  power: number;
+  maxPower: number;
+  followerCount: number;
+  devoteeCount: number;
+  terrorCount: number;
+  aweCount: number;
+  rebelCount: number;
+}
 
 export interface GameUIConfig {
   world: World;
@@ -537,8 +669,11 @@ export interface GameUIConfig {
   seasonState: SeasonState;
   generation: () => number;
   selectedId: () => number;
+  selectedFactionFilter: () => number;
   onSelectCreature: (id: number) => void;
   onCycleCreature: (dir: number) => void;
+  onSelectFaction: (factionId: number) => void;
+  divinePower?: () => DivinePowerInfo | null;
 }
 
 export class GameUI {
@@ -557,6 +692,10 @@ export class GameUI {
 
   // Creature nav state
   private navCreatureIds: number[] = [];
+
+  // Tab state
+  private activeTab: TabId = 'overview';
+  private lastSelectedId = -1;
 
   constructor(cfg: GameUIConfig) {
     this.cfg = cfg;
@@ -590,6 +729,17 @@ export class GameUI {
     this.factionPanel.appendChild(fHeader);
     this.factionPanel.appendChild(this.factionContainer);
 
+    // Faction panel click delegation
+    this.factionContainer.addEventListener('click', (e) => {
+      const card = (e.target as HTMLElement).closest('.faction-card') as HTMLElement | null;
+      if (!card) return;
+      const fid = parseInt(card.dataset.factionId ?? '-1', 10);
+      if (isNaN(fid)) return;
+      // Toggle: click same faction = clear filter
+      const current = this.cfg.selectedFactionFilter();
+      this.cfg.onSelectFaction(current === fid ? -1 : fid);
+    });
+
     // Creature panel
     this.creaturePanel = document.createElement('div');
     this.creaturePanel.id = 'gui-creature';
@@ -597,6 +747,17 @@ export class GameUI {
     this.root.appendChild(this.creaturePanel);
     this.creatureContainer = document.createElement('div');
     this.creaturePanel.appendChild(this.creatureContainer);
+
+    // Tab click delegation
+    this.creaturePanel.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest('.tab-btn') as HTMLElement | null;
+      if (!btn) return;
+      const tab = btn.dataset.tab as TabId | undefined;
+      if (tab) {
+        this.activeTab = tab;
+        this.updateCreaturePanel();
+      }
+    });
 
     // Bottom nav strip
     this.navStrip = document.createElement('div');
@@ -617,6 +778,14 @@ export class GameUI {
       { key: 'pop', icon: '👥', label: 'POP' },
       null,
       { key: 'gen', icon: '🧬', label: 'GEN' },
+      null,
+      { key: 'deaths', icon: '💀', label: 'DEATHS' },
+      null,
+      { key: 'eaten', icon: '🍽️', label: 'EATEN' },
+      null,
+      { key: 'power', icon: '⚡', label: 'POWER' },
+      null,
+      { key: 'cult', icon: '🙏', label: 'CULT' },
     ];
 
     for (const cell of cells) {
@@ -671,17 +840,48 @@ export class GameUI {
 
     // Generation
     this.topCells['gen'].textContent = `${this.cfg.generation()}`;
+
+    // Stats
+    const starveP = simStats.deaths > 0 ? `${(simStats.starvationRate * 100).toFixed(0)}%☠` : '';
+    this.topCells['deaths'].textContent = `${simStats.deaths} ${starveP}`;
+    this.topCells['eaten'].textContent = `${simStats.totalFoodEaten}`;
+
+    // Divine power
+    const dp = this.cfg.divinePower?.();
+    if (dp) {
+      this.topCells['power'].textContent = `${dp.power.toFixed(0)}/${dp.maxPower}`;
+      // Gold tint when power > 50%
+      this.topCells['power'].style.color = dp.power > dp.maxPower * 0.5 ? '#ffd700' : '';
+
+      // Cult followers with stance dots
+      const dots =
+        (dp.devoteeCount > 0 ? `\u{1F49B}${dp.devoteeCount}` : '') +
+        (dp.aweCount > 0 ? `\u{1F49C}${dp.aweCount}` : '') +
+        (dp.terrorCount > 0 ? `\u{2764}\uFE0F${dp.terrorCount}` : '') +
+        (dp.rebelCount > 0 ? `\u{1F5A4}${dp.rebelCount}` : '');
+      this.topCells['cult'].textContent = `${dp.followerCount}${dots ? ' ' + dots : ''}`;
+    } else {
+      this.topCells['power'].textContent = '—';
+      this.topCells['cult'].textContent = '—';
+    }
   }
 
   private updateFactions(): void {
     const factions = this.cfg.factionManager.activeFactions;
+    const filterFid = this.cfg.selectedFactionFilter();
     const html: string[] = [];
+
+    // Show "All Factions" clear button when filter is active
+    if (filterFid >= 0) {
+      html.push(`<div class="faction-filter-clear" data-clear-filter="1">Show All Factions</div>`);
+    }
 
     for (const f of factions) {
       const nation = this.cfg.politicsSystem.getNation(f.id);
       const govName = nation ? GOVERNMENT_NAMES[nation.government] : '';
       const terrCount = nation ? nation.territory : 0;
       const borderColor = `hsl(${f.color}, 60%, 45%)`;
+      const isActive = filterFid === f.id;
 
       let relHtml = '';
       for (const f2 of factions) {
@@ -699,9 +899,11 @@ export class GameUI {
         }
       }
 
+      const tierBadge = (f as any).settlementTier ? `<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:rgba(255,255,255,0.08);color:rgba(120,180,255,0.8);margin-left:4px">${(f as any).settlementTier}</span>` : '<span style="font-size:8px;padding:1px 4px;border-radius:3px;background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.3);margin-left:4px">Nomadic</span>';
+
       html.push(`
-        <div class="faction-card" style="border-left-color:${borderColor}">
-          <div class="faction-name">${f.emoji} ${f.name} <span style="color:rgba(255,255,255,0.3);font-size:10px">(${f.memberIds.size})</span></div>
+        <div class="faction-card${isActive ? ' active' : ''}" data-faction-id="${f.id}" style="border-left-color:${isActive ? '' : borderColor}">
+          <div class="faction-name">${f.emoji} ${f.name} ${tierBadge} <span style="color:rgba(255,255,255,0.3);font-size:10px">(${f.memberIds.size})</span></div>
           <div class="faction-detail">${govName}${terrCount > 0 ? ' T:' + terrCount : ''}${f.philosophy ? ' · ' + f.philosophy : ''}${f.doctrine?.length ? ' ' + f.doctrine.join('') : ''}</div>
           ${relHtml ? '<div class="faction-relations">' + relHtml + '</div>' : ''}
         </div>
@@ -709,10 +911,26 @@ export class GameUI {
     }
 
     this.factionContainer.innerHTML = html.join('');
+
+    // Wire up clear filter button
+    const clearBtn = this.factionContainer.querySelector('[data-clear-filter]');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.cfg.onSelectFaction(-1);
+      });
+    }
   }
 
   private updateCreaturePanel(): void {
     const selId = this.cfg.selectedId();
+
+    // Reset tab when creature changes
+    if (selId !== this.lastSelectedId) {
+      this.activeTab = 'overview';
+      this.lastSelectedId = selId;
+    }
+
     if (selId < 0 || !this.cfg.world.has(selId)) {
       this.creatureContainer.innerHTML = `
         <div class="creature-empty">
@@ -735,14 +953,11 @@ export class GameUI {
     const gen = GenomeStore.get(selId);
     const social = SocialStore.get(selId);
     const expr = ExpressionStore.get(selId);
-    const inv = InventoryStore.get(selId);
-    const mem = MemoryStore.get(selId);
     if (!lc || !bio || !gen || !social) {
       this.creatureContainer.innerHTML = '<div class="creature-empty">No data</div>';
       return;
     }
 
-    const c = bio.chemicals;
     const g = gen.genome;
     const faction = this.cfg.factionManager.getFaction(selId);
     const rank = this.cfg.hierarchySystem.getRank(selId);
@@ -759,62 +974,73 @@ export class GameUI {
       moodHtml = `<span class="mood-badge" style="background:${mc}">${mi} ${expr.dominant} ${expr.mood >= 0 ? '+' : ''}${expr.mood.toFixed(2)}</span>`;
     }
 
-    // Activity
+    // Header (always visible)
+    const headerHtml = `
+      <div class="creature-name">${sexIcon} ${social.name} ${stageIcon}</div>
+      <div class="creature-subtitle">${factionBit} · ${breedLabel} · Age ${lc.age} · Rank ${(rank * 100).toFixed(0)}%</div>
+      ${moodHtml}
+    `;
+
+    // Tab bar
+    const tabs: { id: TabId; label: string }[] = [
+      { id: 'overview', label: 'Overview' },
+      { id: 'items', label: 'Items' },
+      { id: 'diary', label: 'Diary' },
+      { id: 'social', label: 'Social' },
+    ];
+    const tabBarHtml = `
+      <div class="tab-bar">
+        ${tabs.map(t => `<div class="tab-btn${this.activeTab === t.id ? ' active' : ''}" data-tab="${t.id}">${t.label}</div>`).join('')}
+      </div>
+    `;
+
+    // Tab content
+    let contentHtml = '';
+    switch (this.activeTab) {
+      case 'overview':
+        contentHtml = this.renderOverviewTab(selId, bio, social, gen, expr);
+        break;
+      case 'items':
+        contentHtml = this.renderItemsTab(selId);
+        break;
+      case 'diary':
+        contentHtml = this.renderDiaryTab(selId);
+        break;
+      case 'social':
+        contentHtml = this.renderSocialTab(selId, social, gen, faction, rank);
+        break;
+    }
+
+    this.creatureContainer.innerHTML = headerHtml + tabBarHtml + contentHtml;
+  }
+
+  private renderOverviewTab(
+    selId: number,
+    bio: { chemicals: Float32Array },
+    social: { health: number; activity: number },
+    gen: { genome: any },
+    expr: any,
+  ): string {
+    const c = bio.chemicals;
+    const g = gen.genome;
     const actLabel = ACTIVITY_LABELS[social.activity] ?? 'Unknown';
 
-    // Inventory + weapon
-    let invHtml = '';
+    // Weapon badge
     let weaponHtml = '';
-    if (inv) {
-      const items = inv.slots.filter(s => s.item !== -1 && s.count > 0)
-        .map(s => `${ITEM_NAMES[s.item as ItemType] ?? '?'} x${s.count}`).join(', ');
-      invHtml = `<div class="creature-inventory">${items || 'Empty'}</div>`;
-      if (inv.equippedTool > 0) {
-        const toolName = ITEM_NAMES[inv.equippedTool as ItemType] ?? 'Tool';
-        weaponHtml = `<span class="weapon-badge">⚔️ ${toolName}</span>`;
-      }
+    const inv = InventoryStore.get(selId);
+    if (inv && inv.equippedTool > 0) {
+      const toolName = ITEM_NAMES[inv.equippedTool as ItemType] ?? 'Tool';
+      weaponHtml = `<span class="weapon-badge">⚔️ ${toolName}</span>`;
     }
 
-    // Vocabulary
-    let vocabHtml = '';
-    const vocab = VocabularyStore.get(selId);
-    if (vocab) {
-      const emojis = Array.from(vocab.known);
-      const recentSet = new Set(vocab.recent.slice(-5));
-      const emojiCells = emojis.map(e => {
-        const isNew = recentSet.has(e);
-        return `<span class="vocab-emoji${isNew ? ' vocab-new' : ''}">${e}</span>`;
-      }).join('');
-      vocabHtml = `
-        <div class="stat-section">
-          <div class="stat-section-title">Vocabulary (${emojis.length})</div>
-          <div class="vocab-grid">${emojiCells}</div>
-          ${vocab.recent.length > 0 ? `<div style="font-size:9px;color:rgba(120,180,255,0.5);margin-top:3px">Recent: ${vocab.recent.slice(-5).join(' ')}</div>` : ''}
-        </div>
-      `;
-    }
-
-    // Memories
-    let memHtml = '';
-    if (mem) {
-      const active = mem.entries.filter(e => e.type !== 0);
-      const MTYPE = ['', '🍎Food', '⚠️Danger', '😡Hostile', '😊Friend', '🏠Home', '⛏️Rsrc', '🏗️Shelter'];
-      const memItems = active.slice(0, 4).map(m => `${MTYPE[m.type]} ${(m.strength * 100).toFixed(0)}%`).join(' · ');
-      memHtml = `<div style="font-size:9px;color:rgba(255,255,255,0.35);margin-top:4px">Memories: ${active.length}/${MEMORY_SLOTS} ${memItems ? '— ' + memItems : ''}</div>`;
-    }
-
-    // Anxiety bar (only show if anxiety > 0.05)
+    // Anxiety bar
     let anxietyHtml = '';
     if (expr && expr.anxiety > 0.05) {
       anxietyHtml = this.barHTML('Anxiety', expr.anxiety, BAR_COLORS.anxiety);
     }
 
-    this.creatureContainer.innerHTML = `
-      <div class="creature-name">${sexIcon} ${social.name} ${stageIcon}</div>
-      <div class="creature-subtitle">${factionBit} · ${breedLabel} · Age ${lc.age} · Rank ${(rank * 100).toFixed(0)}%${social.language > 0 ? ' · Lang:' + social.language : ''}</div>
-      ${moodHtml}
-
-      <div class="stat-section" style="margin-top:8px">
+    return `
+      <div class="stat-section">
         <div class="stat-section-title">Vitals</div>
         ${this.barHTML('Health', social.health, BAR_COLORS.health)}
         ${this.barHTML('Energy', c[ChemId.Energy], BAR_COLORS.energy)}
@@ -842,12 +1068,148 @@ export class GameUI {
 
       <div class="stat-section">
         <div class="stat-section-title">Activity · ${actLabel} ${weaponHtml}</div>
-        ${invHtml}
-        ${memHtml}
       </div>
-
-      ${vocabHtml}
     `;
+  }
+
+  private renderItemsTab(selId: number): string {
+    const inv = InventoryStore.get(selId);
+    let invHtml = '<div class="creature-inventory">Empty</div>';
+    if (inv) {
+      const items = inv.slots.filter(s => s.item !== -1 && s.count > 0)
+        .map(s => `${ITEM_NAMES[s.item as ItemType] ?? '?'} x${s.count}`).join(', ');
+      invHtml = `<div class="creature-inventory">${items || 'Empty'}</div>`;
+
+      if (inv.equippedTool > 0) {
+        const toolName = ITEM_NAMES[inv.equippedTool as ItemType] ?? 'Tool';
+        invHtml += `<div style="margin-top:4px"><span class="weapon-badge">⚔️ Equipped: ${toolName}</span></div>`;
+      }
+    }
+
+    // Recent trades from diary
+    const diary = DiaryStore.get(selId);
+    let tradeHtml = '';
+    if (diary) {
+      const allEntries = renderDiary(diary);
+      const trades = allEntries.filter(e => e.color === 'trade').slice(0, 10);
+      if (trades.length > 0) {
+        const rows = trades.map(t => `<div class="trade-row">${t.text}</div>`).join('');
+        tradeHtml = `
+          <div class="stat-section" style="margin-top:8px">
+            <div class="stat-section-title">Recent Trades (${diary.tradeCount} lifetime)</div>
+            ${rows}
+          </div>
+        `;
+      }
+    }
+
+    return `
+      <div class="stat-section">
+        <div class="stat-section-title">Inventory</div>
+        ${invHtml}
+      </div>
+      ${tradeHtml}
+    `;
+  }
+
+  private renderDiaryTab(selId: number): string {
+    const diary = DiaryStore.get(selId);
+    if (!diary || diary.entries.length === 0) {
+      return '<div style="color:rgba(255,255,255,0.3);font-size:10px;text-align:center;padding:12px">No diary entries yet.</div>';
+    }
+
+    // Lifetime stats
+    const statsHtml = `
+      <div class="lifetime-stats">
+        <div class="lifetime-stat"><span class="label">Kills</span><span class="val">${diary.killCount}</span></div>
+        <div class="lifetime-stat"><span class="label">Trades</span><span class="val">${diary.tradeCount}</span></div>
+        <div class="lifetime-stat"><span class="label">Offspring</span><span class="val">${diary.offspringCount}</span></div>
+        <div class="lifetime-stat"><span class="label">Gathered</span><span class="val">${diary.gatherCount}</span></div>
+      </div>
+    `;
+
+    // Diary entries
+    const entries = renderDiary(diary);
+    const entryHtml = entries.map(e =>
+      `<div class="diary-entry ${e.color}">${e.text}</div>`
+    ).join('');
+
+    return `
+      ${statsHtml}
+      <div class="diary-scroll">${entryHtml}</div>
+    `;
+  }
+
+  private renderSocialTab(
+    selId: number,
+    social: any,
+    gen: { genome: any },
+    faction: Faction | undefined,
+    rank: number,
+  ): string {
+    const html: string[] = [];
+
+    // Faction info
+    if (faction) {
+      const nation = this.cfg.politicsSystem.getNation(faction.id);
+      const govName = nation ? GOVERNMENT_NAMES[nation.government] : '';
+      html.push(`
+        <div class="stat-section">
+          <div class="stat-section-title">Faction</div>
+          <div style="font-size:11px;margin-bottom:4px">${faction.emoji} ${faction.name}</div>
+          <div style="font-size:9px;color:rgba(255,255,255,0.4)">
+            ${govName} · ${faction.memberIds.size} members · Rank ${(rank * 100).toFixed(0)}%
+            ${faction.philosophy ? '<br>' + faction.philosophy : ''}
+          </div>
+        </div>
+      `);
+    }
+
+    // Bonded partner
+    const mating = MatingStore.get(selId);
+    if (mating && mating.bondedPartner >= 0) {
+      const partnerSocial = SocialStore.get(mating.bondedPartner);
+      html.push(`
+        <div class="stat-section">
+          <div class="stat-section-title">Bonded Partner</div>
+          <div style="font-size:10px">💕 ${partnerSocial?.name ?? 'Unknown'} (${(mating.bondStrength * 100).toFixed(0)}% bond)</div>
+        </div>
+      `);
+    }
+
+    // Vocabulary
+    const vocab = VocabularyStore.get(selId);
+    if (vocab) {
+      const emojis = Array.from(vocab.known);
+      const recentSet = new Set(vocab.recent.slice(-5));
+      const emojiCells = emojis.map(e => {
+        const isNew = recentSet.has(e);
+        return `<span class="vocab-emoji${isNew ? ' vocab-new' : ''}">${e}</span>`;
+      }).join('');
+      html.push(`
+        <div class="stat-section">
+          <div class="stat-section-title">Vocabulary (${emojis.length})</div>
+          <div class="vocab-grid">${emojiCells}</div>
+          ${vocab.recent.length > 0 ? `<div style="font-size:9px;color:rgba(120,180,255,0.5);margin-top:3px">Recent: ${vocab.recent.slice(-5).join(' ')}</div>` : ''}
+        </div>
+      `);
+    }
+
+    // Memories
+    const mem = MemoryStore.get(selId);
+    if (mem) {
+      const active = mem.entries.filter((e: any) => e.type !== 0);
+      const MTYPE = ['', '🍎Food', '⚠️Danger', '😡Hostile', '😊Friend', '🏠Home', '⛏️Rsrc', '🏗️Shelter'];
+      const memItems = active.slice(0, 6).map((m: any) => `${MTYPE[m.type]} ${(m.strength * 100).toFixed(0)}%`).join(' · ');
+      html.push(`
+        <div class="stat-section">
+          <div class="stat-section-title">Memories (${active.length}/${MEMORY_SLOTS})</div>
+          <div style="font-size:9px;color:rgba(255,255,255,0.45)">${memItems || 'None'}</div>
+        </div>
+      `);
+    }
+
+    return html.join('');
   }
 
   private barHTML(label: string, value: number, gradient: string): string {
@@ -874,7 +1236,14 @@ export class GameUI {
   }
 
   private updateNavStrip(): void {
-    const alive = this.getAliveIds();
+    let alive = this.getAliveIds();
+    const filterFid = this.cfg.selectedFactionFilter();
+    if (filterFid >= 0) {
+      alive = alive.filter(id => {
+        const s = SocialStore.get(id);
+        return s && s.factionId === filterFid;
+      });
+    }
     const selId = this.cfg.selectedId();
 
     // Only rebuild if creature list changed

@@ -6,19 +6,21 @@ import { SocialStore, Activity } from '../components/Social';
 import { MotorStore } from '../components/Motor';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { InventoryStore, ItemType } from '../components/Inventory';
-import { attachToolMesh } from '../creatures/MeshBuilder';
+import { attachToolMesh, attachShieldMesh } from '../creatures/MeshBuilder';
+import { countItem } from '../components/Inventory';
 
 // Procedural creature animations driven by Activity state.
 // Finds named children in the creature group and applies per-frame transforms.
 
 interface AnimState {
   walkPhase: number;     // oscillator for walk cycle
-  gatherPhase: number;   // oscillator for gathering bend
-  buildPhase: number;    // oscillator for hammer motion
+  gatherPhase: number;   // oscillator for gathering chop
+  buildPhase: number;    // oscillator for building place
   eatPhase: number;      // oscillator for eating
-  fightPhase: number;    // oscillator for fighting lunge
+  fightPhase: number;    // oscillator for fighting slash
   matePhase: number;     // oscillator for mating dance
   lastTool: number;      // last equipped tool type for change detection
+  lastShield: boolean;   // last shield state for change detection
 }
 
 const animStates = new Map<number, AnimState>();
@@ -26,7 +28,7 @@ const animStates = new Map<number, AnimState>();
 function getState(id: number): AnimState {
   let s = animStates.get(id);
   if (!s) {
-    s = { walkPhase: 0, gatherPhase: 0, buildPhase: 0, eatPhase: 0, fightPhase: 0, matePhase: 0, lastTool: -1 };
+    s = { walkPhase: 0, gatherPhase: 0, buildPhase: 0, eatPhase: 0, fightPhase: 0, matePhase: 0, lastTool: -1, lastShield: false };
     animStates.set(id, s);
   }
   return s;
@@ -97,47 +99,53 @@ export class AnimationSystem extends System {
         }
 
         case Activity.Gathering: {
-          // Bend down and reach — cyclical scoop motion
-          state.gatherPhase += dt * 3;
-          const bendAmt = 0.3 + Math.sin(state.gatherPhase) * 0.15;
-          const reachAmt = Math.sin(state.gatherPhase * 0.5) * 0.5;
-
-          if (torso) torso.rotation.x = bendAmt;
-          if (armR) { armR.rotation.x = -0.8 + reachAmt; armR.rotation.z = -0.2; }
-          if (armL) { armL.rotation.x = -0.4; armL.rotation.z = 0.2; }
-
-          // Slight leg bend
-          if (legL) legL.rotation.x = 0.15;
-          if (legR) legR.rotation.x = 0.15;
-
-          // Gathering progress visual — gather bar on the creature
-          if (inv && inv.gatherProgress > 0) {
-            const prog = inv.gatherProgress;
-            // Pulse the reach with progress
-            if (armR) armR.rotation.x = -0.8 + Math.sin(state.gatherPhase * 2) * 0.3 * prog;
+          // Overhead chop cycle: slow raise, sharp downstroke
+          state.gatherPhase += dt * 4;
+          const chopCycle = state.gatherPhase % (Math.PI * 2);
+          // Raise slow (0 to PI), strike fast (PI to 2PI)
+          let armAngle: number;
+          if (chopCycle < Math.PI) {
+            // Slow raise
+            armAngle = -0.3 + (-1.2) * (chopCycle / Math.PI);
+          } else {
+            // Sharp downstroke
+            const t = (chopCycle - Math.PI) / Math.PI;
+            armAngle = -1.5 + 1.8 * (t * t); // accelerating down
           }
+
+          if (armR) { armR.rotation.x = armAngle; armR.rotation.z = -0.15; }
+          if (armL) { armL.rotation.x = -0.3; armL.rotation.z = 0.2; }
+
+          // Body leans into chop
+          if (torso) torso.rotation.x = chopCycle > Math.PI ? 0.2 : 0.05;
+
+          // Planted stance
+          if (legL) legL.rotation.x = 0.15;
+          if (legR) legR.rotation.x = -0.05;
           break;
         }
 
         case Activity.Building: {
-          // Hammer motion — arm raises and falls
-          state.buildPhase += dt * 5;
-          const hammerSwing = Math.sin(state.buildPhase);
-          const isDownStroke = hammerSwing < 0;
+          // Arm extends forward to place block, pulls back
+          state.buildPhase += dt * 3;
+          const placeCycle = Math.sin(state.buildPhase);
+          const extending = placeCycle > 0;
 
           if (armR) {
-            armR.rotation.x = -1.2 + hammerSwing * 0.8;
-            armR.rotation.z = -0.3;
+            // Extend arm forward to place, then pull back
+            armR.rotation.x = extending ? -1.0 - placeCycle * 0.3 : -0.3 + placeCycle * 0.2;
+            armR.rotation.z = -0.1;
           }
           if (armL) {
-            armL.rotation.x = -0.3;
-            armL.rotation.z = 0.3;
+            // Support arm — holds material
+            armL.rotation.x = extending ? -0.6 : -0.3;
+            armL.rotation.z = 0.2;
           }
 
-          // Body follows hammer
-          if (torso) torso.rotation.x = isDownStroke ? 0.15 : 0.05;
+          // Lean forward when placing
+          if (torso) torso.rotation.x = extending ? 0.15 : 0.05;
 
-          // Feet planted
+          // Stable stance
           if (legL) legL.rotation.x = 0.1;
           if (legR) legR.rotation.x = -0.05;
           break;
@@ -158,24 +166,41 @@ export class AnimationSystem extends System {
         }
 
         case Activity.Fighting: {
-          // Lunge and punch
-          state.fightPhase += dt * 8;
-          const punch = Math.sin(state.fightPhase);
-          const isPunching = punch > 0.3;
+          // Sword slash across body + shield raise alternation
+          state.fightPhase += dt * 6;
+          const fightCycle = state.fightPhase % (Math.PI * 2);
+          const isAttacking = fightCycle < Math.PI; // first half: attack, second: defend
 
-          if (torso) torso.rotation.x = isPunching ? -0.15 : 0.1;
-
-          if (armR) {
-            armR.rotation.x = isPunching ? -1.2 : -0.3;
-            armR.rotation.z = isPunching ? 0.2 : -0.1;
+          if (isAttacking) {
+            // Sword slash: arm swings wide across body
+            const slashT = fightCycle / Math.PI;
+            if (armR) {
+              armR.rotation.x = -0.8 - slashT * 0.4;
+              armR.rotation.z = 0.8 - slashT * 1.6; // sweep from right to left
+            }
+            if (armL) {
+              // Shield down during attack
+              armL.rotation.x = -0.4;
+              armL.rotation.z = 0.2;
+            }
+            if (torso) torso.rotation.x = -0.1;
+          } else {
+            // Defend: shield up, sword back
+            const defendT = (fightCycle - Math.PI) / Math.PI;
+            if (armR) {
+              armR.rotation.x = -0.5;
+              armR.rotation.z = -0.3 + defendT * 0.2;
+            }
+            if (armL) {
+              // Shield raise
+              armL.rotation.x = -1.0 + defendT * 0.3;
+              armL.rotation.z = 0.4;
+            }
+            if (torso) torso.rotation.x = 0.05;
           }
-          if (armL) {
-            armL.rotation.x = -0.5;
-            armL.rotation.z = 0.3;
-          }
 
-          // Aggressive stance
-          if (legL) legL.rotation.x = 0.2;
+          // Wide fighting stance
+          if (legL) legL.rotation.x = 0.25;
           if (legR) legR.rotation.x = -0.3;
           break;
         }
@@ -226,6 +251,12 @@ export class AnimationSystem extends System {
         if (currentTool !== state.lastTool) {
           state.lastTool = currentTool;
           attachToolMesh(object, currentTool as ItemType);
+        }
+        // Shield coexists with weapon
+        const hasShield = countItem(inv, ItemType.Shield) > 0;
+        if (hasShield !== state.lastShield) {
+          state.lastShield = hasShield;
+          attachShieldMesh(object, hasShield);
         }
       }
     }

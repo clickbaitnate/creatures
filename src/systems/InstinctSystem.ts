@@ -10,7 +10,7 @@ import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { InventoryStore, hasSpace, hasFood, countItem, ItemType } from '../components/Inventory';
 import { SocialStore, Activity } from '../components/Social';
 import { ExpressionStore } from '../components/Expression';
-import { ZealotryStore } from '../components/Zealotry';
+import { ZealotryStore, CultStance } from '../components/Zealotry';
 import { VocabularyStore, knows } from '../components/Vocabulary';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
 import { GoalStore, GoalType } from '../components/Goal';
@@ -23,6 +23,8 @@ import type { MonsterManager } from '../world/MonsterManager';
 import type { DayNightState } from '../world/DayNightCycle';
 import type { VoxelWorld } from '../voxel/VoxelWorld';
 import { Block } from '../voxel/BlockTypes';
+import { CombatStore } from '../components/Combat';
+import { simStats } from '../stats/SimStats';
 
 // Decision lobe: neurons 48-59
 // 48=moveForward, 49=turnLeft, 50=turnRight, 51=speedMod,
@@ -38,17 +40,23 @@ export class InstinctSystem extends System {
   monsterManager: MonsterManager | null = null;
   dayNight: DayNightState | null = null;
   voxelWorld: VoxelWorld | null = null;
+  tickCount = 0;
 
   update(world: World, _dt: number): void {
+    this.tickCount++;
     const entities = world.query(this.query);
 
     for (const id of entities) {
       const lifecycle = LifecycleStore.get(id);
       if (lifecycle && lifecycle.stage === LifeStage.Dead) continue;
 
-      const { brain } = BrainStore.get(id)!;
-      const senses = SensesStore.get(id)!;
-      const { chemicals } = BiochemStore.get(id)!;
+      const brainData = BrainStore.get(id);
+      const senses = SensesStore.get(id);
+      const biochemData = BiochemStore.get(id);
+      if (!brainData || !senses || !biochemData) continue;
+
+      const { brain } = brainData;
+      const { chemicals } = biochemData;
       const genomeData = GenomeStore.get(id);
       const motor = MotorStore.get(id);
       const inv = InventoryStore.get(id);
@@ -59,6 +67,10 @@ export class InstinctSystem extends System {
       const hunger = chemicals[ChemId.Hunger];
       const energy = chemicals[ChemId.Energy];
       const genome = genomeData?.genome;
+
+      // If in combat, TacticalCombatSystem handles combat movement/targeting
+      const combatData = CombatStore.get(id);
+      const inCombat = combatData?.inCombat ?? false;
 
       // Reset activity to Idle each tick — other systems set it if active
       const social = SocialStore.get(id);
@@ -73,8 +85,8 @@ export class InstinctSystem extends System {
       const tiredness = expr?.tiredness ?? 0;
       const happiness = expr?.happiness ?? 0;
 
-      // Tiredness suppresses all outputs
-      const tirednessDamper = 1.0 - tiredness * 0.4;
+      // Tiredness suppresses outputs mildly — never paralyze (min 0.5x)
+      const tirednessDamper = Math.max(0.5, 1.0 - tiredness * 0.3);
 
       // Goal-driven instinct biases (from GoalSystem)
       if (goal) {
@@ -135,13 +147,26 @@ export class InstinctSystem extends System {
       }
 
       // Instinct 1: When hungry and resource visible, approach resource tile
+      // (Resource sensing already filters out cross-water resources in SensorySystem)
       if (hunger > 0.3 && senses.resourceVisible) {
-        const urgency = hunger * 0.6;
-        brain.outputs[48] += urgency * 0.5; // move forward
-        if (senses.nearestResourceAngle < -0.1) {
-          brain.outputs[49] += urgency * 0.4; // turn left
-        } else if (senses.nearestResourceAngle > 0.1) {
-          brain.outputs[50] += urgency * 0.4; // turn right
+        // Don't approach resources if we're at a water edge — SensorySystem may still
+        // report a visible resource from before the water check kicks in
+        let waterBlocking = false;
+        if (transform && this.voxelWorld) {
+          const resAngle = transform.rotation + senses.nearestResourceAngle * Math.PI;
+          waterBlocking = this.voxelWorld.isWaterAt(
+            transform.x + Math.sin(resAngle) * 1.0,
+            transform.z + Math.cos(resAngle) * 1.0,
+          );
+        }
+        if (!waterBlocking) {
+          const urgency = hunger * 0.6;
+          brain.outputs[48] += urgency * 0.5; // move forward
+          if (senses.nearestResourceAngle < -0.1) {
+            brain.outputs[49] += urgency * 0.4; // turn left
+          } else if (senses.nearestResourceAngle > 0.1) {
+            brain.outputs[50] += urgency * 0.4; // turn right
+          }
         }
       }
 
@@ -155,12 +180,24 @@ export class InstinctSystem extends System {
       }
 
       // Instinct 3: Gather when resource visible and inventory not full
+      // Only approach if no water between creature and resource
       if (senses.resourceVisible && inv && hasSpace(inv) && genome) {
         const gatherUrge = genome.gatherAffinity * 0.4;
         if (senses.nearestResourceDist < 0.15) {
-          brain.outputs[53] += gatherUrge + 0.3; // gather
+          brain.outputs[53] += gatherUrge + 0.3; // gather (already close enough)
         } else if (hunger > 0.2 || energy > 0.5) {
-          brain.outputs[48] += gatherUrge * 0.3; // approach
+          // Check water between us and the resource direction before approaching
+          let waterBlocking = false;
+          if (transform && this.voxelWorld) {
+            const resAngle = transform.rotation + senses.nearestResourceAngle * Math.PI;
+            waterBlocking = this.voxelWorld.isWaterAt(
+              transform.x + Math.sin(resAngle) * 1.0,
+              transform.z + Math.cos(resAngle) * 1.0,
+            );
+          }
+          if (!waterBlocking) {
+            brain.outputs[48] += gatherUrge * 0.3; // approach
+          }
         }
       }
 
@@ -182,7 +219,8 @@ export class InstinctSystem extends System {
       }
 
       // Instinct 7: Flee from threats — fear amplifies flee response
-      if (senses.threatVisible && senses.threatLevel > 0.5) {
+      // (deferred to TacticalCombatSystem when in combat)
+      if (!inCombat && senses.threatVisible && senses.threatLevel > 0.5) {
         const fleeBoost = 1.0 + fear * 0.8; // fear makes flee stronger
         brain.outputs[48] += 0.6 * fleeBoost; // run forward
         // Turn away from threat
@@ -194,7 +232,7 @@ export class InstinctSystem extends System {
         brain.outputs[51] += 0.5 * fleeBoost; // speed boost
       }
       // Anger makes creature stand ground instead of fleeing (counteracts flee)
-      else if (senses.threatVisible && senses.threatLevel > 0.3 && anger > 0.5) {
+      else if (!inCombat && senses.threatVisible && senses.threatLevel > 0.3 && anger > 0.5) {
         brain.outputs[59] += anger * 0.4; // patrol/fight instead of flee
         brain.outputs[48] += 0.2; // approach threat
       }
@@ -202,13 +240,30 @@ export class InstinctSystem extends System {
       // Instinct 8: Hunt when prey visible and hungry
       if (senses.preyVisible && hunger > 0.3 && genome) {
         const huntUrge = genome.huntAffinity * (genome.aggression * 0.5 + 0.5);
-        brain.outputs[54] += huntUrge * 0.5; // hunt
-        brain.outputs[48] += huntUrge * 0.4; // chase
+        // Reduce hunt urge for large prey (type >= 3) when few allies nearby
+        const preyType = senses.nearestPreyType;
+        const isLargePrey = preyType >= 3; // Deer, Boar, Turkey (size 2+), Elk
+        const largePenalty = isLargePrey && senses.nearbyFactionCount < 2 ? 0.3 : 1.0;
+        brain.outputs[54] += huntUrge * 0.5 * largePenalty; // hunt
+        brain.outputs[48] += huntUrge * 0.4 * largePenalty; // chase
         if (senses.nearestPreyAngle < -0.1) {
-          brain.outputs[49] += huntUrge * 0.3;
+          brain.outputs[49] += huntUrge * 0.3 * largePenalty;
         } else if (senses.nearestPreyAngle > 0.1) {
-          brain.outputs[50] += huntUrge * 0.3;
+          brain.outputs[50] += huntUrge * 0.3 * largePenalty;
         }
+      }
+
+      // Solo vulnerability instinct: loners feel anxiety and avoid large prey
+      if (senses.nearbyFactionCount === 0) {
+        chemicals[ChemId.Anxiety] = Math.min(1, chemicals[ChemId.Anxiety] + 0.002);
+        brain.outputs[54] *= 0.3; // suppress hunting large prey
+        brain.outputs[48] += 0.3; // boost monster flee response (move away)
+      }
+
+      // Pack hunt coordination: when allies nearby and prey visible, boost hunt for large prey
+      if (senses.nearbyFactionCount >= 2 && senses.preyVisible && senses.nearestPreyType >= 3) {
+        brain.outputs[54] += 0.4; // boost hunt
+        brain.outputs[48] += 0.3; // chase
       }
 
       // Instinct 9: Explore when no resources visible — curiosity amplifies
@@ -335,7 +390,8 @@ export class InstinctSystem extends System {
       }
 
       // Instinct 18: Fight-or-flight against monsters
-      if (senses.monsterVisible && transform) {
+      // (deferred to TacticalCombatSystem when in combat)
+      if (!inCombat && senses.monsterVisible && transform) {
         const monsterDist = senses.nearestMonsterDist; // 0-1 normalized
         const monsterAngle = senses.nearestMonsterAngle; // -1 to 1
         const urgency = 1.0 - monsterDist;
@@ -395,8 +451,9 @@ export class InstinctSystem extends System {
       }
 
       // Instinct 19: Anxiety → violence/isolation
+      // (deferred to TacticalCombatSystem when in combat)
       const anxiety = expr?.anxiety ?? 0;
-      if (anxiety > 0.3 && genome) {
+      if (!inCombat && anxiety > 0.3 && genome) {
         // Anxiety + aggression → boost fight/patrol
         brain.outputs[59] += anxiety * genome.aggression * 0.5; // patrol
         brain.outputs[48] += anxiety * 0.2; // restless movement
@@ -416,18 +473,32 @@ export class InstinctSystem extends System {
           }
         }
 
-        // Stuck at water edge (water ahead) → frustration, boost build/craft
-        if (this.voxelWorld.isWaterAt(
+        // Water-edge avoidance: when water is ahead, turn away and suppress resource-seeking
+        // This prevents creatures from clustering at water edges chasing resources across water
+        const waterAhead = this.voxelWorld.isWaterAt(
           transform.x + Math.sin(transform.rotation) * 1.0,
           transform.z + Math.cos(transform.rotation) * 1.0,
-        )) {
-          brain.outputs[55] += 0.3; // build
-          brain.outputs[56] += 0.3; // craft
-          // Increase anxiety (frustration)
-          const biochem2 = BiochemStore.get(id);
-          if (biochem2) {
-            biochem2.chemicals[ChemId.Anxiety] = Math.min(1,
-              biochem2.chemicals[ChemId.Anxiety] + 0.002);
+        );
+        const waterNearby = waterAhead || this.voxelWorld.isWaterAt(
+          transform.x + Math.sin(transform.rotation + 0.5) * 0.8,
+          transform.z + Math.cos(transform.rotation + 0.5) * 0.8,
+        ) || this.voxelWorld.isWaterAt(
+          transform.x + Math.sin(transform.rotation - 0.5) * 0.8,
+          transform.z + Math.cos(transform.rotation - 0.5) * 0.8,
+        );
+
+        if (waterNearby) {
+          const hasBoat = inv ? countItem(inv, ItemType.Boat) > 0 : false;
+          if (!hasBoat) {
+            // Strong forward push — MotorSystem's findLandDirection will handle the angle
+            brain.outputs[48] += 0.8;
+            // Suppress ALL resource-seeking near water to break deadlock
+            brain.outputs[53] *= 0.1; // hard suppress gather
+            brain.outputs[54] *= 0.1; // hard suppress hunt
+            brain.outputs[52] *= 0.5; // reduce eat (don't stop to eat at water edge)
+            // Mild build/craft boost (should build boats)
+            brain.outputs[55] += 0.15;
+            brain.outputs[56] += 0.2;
           }
         }
       }
@@ -474,9 +545,167 @@ export class InstinctSystem extends System {
         }
       }
 
-      // Apply tiredness damper to all decision outputs
-      for (let d = 48; d < 60; d++) {
-        brain.outputs[d] *= tirednessDamper;
+      // Instinct 22: Cooking — when hungry + has raw food + no cooked food → cook
+      if (motor && inv && hunger > 0.3) {
+        const hasRaw = countItem(inv, ItemType.RawMeat) > 0 ||
+          countItem(inv, ItemType.RawBerry) > 0 ||
+          countItem(inv, ItemType.RawFish) > 0 ||
+          countItem(inv, ItemType.LargeMeat) > 0;
+        const hasCooked = countItem(inv, ItemType.CookedMeat) > 0 ||
+          countItem(inv, ItemType.CookedBerry) > 0 ||
+          countItem(inv, ItemType.CookedFish) > 0;
+        if (hasRaw && !hasCooked) {
+          // Always signal wantCook so EatingSystem defers when campfire IS visible
+          motor.wantCook = true;
+          if (senses.campfireVisible) {
+            brain.outputs[52] *= 0.3; // suppress raw eating — will cook instead
+            // Navigate toward campfire
+            brain.outputs[48] += 0.5;
+            if (senses.nearestCampfireAngle < -0.1) brain.outputs[49] += 0.3;
+            else if (senses.nearestCampfireAngle > 0.1) brain.outputs[50] += 0.3;
+          }
+          // If no campfire visible, wantCook is set but eat suppression is NOT applied,
+          // so EatingSystem will still allow raw eating as a fallback
+        }
+      }
+
+      // Instinct 23: Campfire gathering — near campfire + has energy → slow down, linger
+      if (senses.campfireVisible && senses.nearestCampfireDist < 0.15 && energy > 0.3) {
+        brain.outputs[48] *= 0.4; // slow down near campfire
+        // Mild approach if not too close
+        if (senses.nearestCampfireDist > 0.05) {
+          if (senses.nearestCampfireAngle < -0.1) brain.outputs[49] += 0.1;
+          else if (senses.nearestCampfireAngle > 0.1) brain.outputs[50] += 0.1;
+        }
+      }
+
+      // Instinct 24: Sleep — when tired, seek shelter and sleep
+      // Nocturnal creatures (lunar zealots) sleep during the day instead
+      if (motor) {
+        const zealotry = ZealotryStore.get(id);
+        const isNocturnal = zealotry ? zealotry.zealotry > 0.6 : false;
+        const shouldSleep = isNocturnal
+          ? (tiredness > 0.6 && !this.dayNight?.isNight)   // nocturnal: sleep in daytime
+          : (tiredness > 0.6 && (this.dayNight?.isNight ?? false)); // normal: sleep at night
+
+        if (motor.sleepTimer > 0) {
+          // Currently sleeping — suppress ALL movement/action outputs
+          for (let d = 48; d < 60; d++) brain.outputs[d] = 0;
+          motor.sleepTimer--;
+          motor.forward = 0;
+          motor.wantEat = false;
+          motor.wantGather = false;
+          motor.wantHunt = false;
+          motor.wantBuild = false;
+          // Set sleeping activity
+          const sleepSocial = SocialStore.get(id);
+          if (sleepSocial) sleepSocial.activity = Activity.Sleeping;
+          // Restore energy/ATP/tiredness while sleeping
+          chemicals[ChemId.Energy] = Math.min(1, chemicals[ChemId.Energy] + 0.003);
+          chemicals[ChemId.ATP] = Math.min(1, chemicals[ChemId.ATP] + 0.004);
+          chemicals[ChemId.Tiredness] = Math.max(0, chemicals[ChemId.Tiredness] - 0.005);
+          chemicals[ChemId.Anxiety] = Math.max(0, chemicals[ChemId.Anxiety] - 0.003);
+        } else if (shouldSleep || tiredness > 0.85) {
+          // Want to sleep — check if near a shelter/longhouse
+          motor.wantSleep = true;
+          if (senses.buildingVisible && senses.nearestBuildingDist < 0.1) {
+            // Close to a building — start sleeping
+            motor.sleepTimer = 150 + Math.floor(Math.random() * 100); // 150-250 ticks
+            motor.wantSleep = false;
+          } else if (senses.buildingVisible) {
+            // Approach building to sleep
+            brain.outputs[48] += 0.6;
+            if (senses.nearestBuildingAngle < -0.1) brain.outputs[49] += 0.4;
+            else if (senses.nearestBuildingAngle > 0.1) brain.outputs[50] += 0.4;
+          } else if (tiredness > 0.85) {
+            // No building — sleep rough on the ground (less effective)
+            motor.sleepTimer = 100;
+            motor.wantSleep = false;
+          }
+        } else {
+          motor.wantSleep = false;
+        }
+      }
+
+      // Instinct 25: Post-divine-intervention behavioral response
+      {
+        const zealotry = ZealotryStore.get(id);
+        if (zealotry && zealotry.lastLiftTick >= 0 && simStats.tick - zealotry.lastLiftTick < 200) {
+          const recency = 1.0 - (simStats.tick - zealotry.lastLiftTick) / 200;
+          switch (zealotry.stance) {
+            case CultStance.Terror:
+              // Flee: suppress actions, boost forward
+              brain.outputs[48] += 0.8 * recency;
+              brain.outputs[51] += 0.5 * recency; // speed
+              brain.outputs[52] *= 0.3; // suppress eat
+              brain.outputs[53] *= 0.3; // suppress gather
+              break;
+            case CultStance.Awe:
+              // Freeze in wonder for ~60 ticks
+              if (simStats.tick - zealotry.lastLiftTick < 60) {
+                for (let d = 48; d < 60; d++) brain.outputs[d] *= 0.1;
+              }
+              break;
+            case CultStance.Devotion:
+              // Seek nearest same-faction creature, boost sociability
+              brain.outputs[58] += 0.4 * recency; // trade (social)
+              if (senses.creatureVisible) {
+                brain.outputs[48] += 0.3 * recency;
+                if (senses.nearestCreatureAngle < -0.1) brain.outputs[49] += 0.2 * recency;
+                else if (senses.nearestCreatureAngle > 0.1) brain.outputs[50] += 0.2 * recency;
+              }
+              break;
+            case CultStance.Rebellion:
+              // Boost aggression, fight drive
+              brain.outputs[54] += 0.4 * recency; // hunt
+              brain.outputs[59] += 0.5 * recency; // patrol/fight
+              brain.outputs[48] += 0.3 * recency;
+              break;
+          }
+        }
+      }
+
+      // Instinct 26: Revolutionary behavior — boost aggression, seek revolutionaries
+      if (motor && motor.wantRevolt && genome) {
+        brain.outputs[59] += 0.6; // patrol/fight
+        brain.outputs[48] += 0.4; // move aggressively
+        brain.outputs[54] += genome.aggression * 0.3; // hunt (aggressive)
+        brain.outputs[58] *= 0.3; // suppress trade
+        brain.outputs[55] *= 0.3; // suppress building
+        // Seek other creatures (revolutionary allies)
+        if (senses.creatureVisible) {
+          brain.outputs[48] += 0.3;
+          if (senses.nearestCreatureAngle < -0.1) brain.outputs[49] += 0.2;
+          else if (senses.nearestCreatureAngle > 0.1) brain.outputs[50] += 0.2;
+        }
+      }
+
+      // Raid movement: when raider has a target, navigate toward it
+      if (motor && (motor.raidTargetX !== 0 || motor.raidTargetZ !== 0) && transform) {
+        const dx = motor.raidTargetX - transform.x;
+        const dz = motor.raidTargetZ - transform.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist > 3) {
+          const angle = Math.atan2(dx, dz);
+          let relAngle = angle - transform.rotation;
+          while (relAngle > Math.PI) relAngle -= 2 * Math.PI;
+          while (relAngle < -Math.PI) relAngle += 2 * Math.PI;
+          const nav = relAngle / Math.PI;
+          brain.outputs[48] += 0.7; // strong forward
+          if (nav < -0.1) brain.outputs[49] += 0.4;
+          else if (nav > 0.1) brain.outputs[50] += 0.4;
+          brain.outputs[51] += 0.3; // speed boost
+          // Suppress other activities during raid march
+          brain.outputs[53] *= 0.2; // suppress gather
+          brain.outputs[55] *= 0.2; // suppress build
+        }
+      }
+
+      // Apply tiredness damper to all decision outputs (but sleeping already zeroed them)
+      if (!motor || motor.sleepTimer <= 0) {
+        for (let d = 48; d < 60; d++) {
+          brain.outputs[d] *= tirednessDamper;
+        }
       }
     }
   }

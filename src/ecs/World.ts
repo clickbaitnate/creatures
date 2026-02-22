@@ -71,6 +71,14 @@ export class World {
     return this.masks.has(entityId);
   }
 
+  /** Clear all entities and component data (for game reset) */
+  clearAll(): void {
+    this.masks.clear();
+    for (const storage of this.storages) {
+      storage.clear();
+    }
+  }
+
   /** Register a system */
   addSystem(system: System): void {
     this.systems.push(system);

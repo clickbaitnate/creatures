@@ -4,7 +4,7 @@ import { TransformStore } from '../components/Transform';
 import { SensesStore } from '../components/Senses';
 import { SocialStore } from '../components/Social';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
-import { BuildingStore } from '../components/Building';
+import { BuildingStore, BuildingType } from '../components/Building';
 import { distSq } from '../utils/Math';
 import { ComponentStorage } from '../ecs/Component';
 import { ResourceGrid, Resource, GRID_SIZE, CELL_SIZE, GRID_CELLS } from '../world/ResourceGrid';
@@ -31,6 +31,7 @@ const CROWD_RANGE = 12;
 const CROWD_RANGE_SQ = CROWD_RANGE * CROWD_RANGE;
 const CROWD_CAP = 8; // 8 neighbors = density 1.0
 const RESOURCE_SCAN_RADIUS = 5; // grid cells to scan around creature
+const WATER_PENALTY_DIST = 2; // blocks within this distance of water get penalized in resource scoring
 
 export class SensorySystem extends System {
   readonly query = SensesStore.bit | TransformStore.bit;
@@ -108,6 +109,7 @@ export class SensorySystem extends System {
       // ── Resource sensing (voxel world or grid) ──────────────────────
       if (this.voxelWorld) {
         // Voxel-based resource sensing: scan nearby surface blocks for mineable resources
+        // Water-aware: skip resources across water, penalize water-adjacent resources
         const [cbx, , cbz] = this.voxelWorld.worldToBlock(transform.x, 0, transform.z);
         const scanR = RESOURCE_SCAN_RADIUS * 2; // block-level radius
 
@@ -119,7 +121,10 @@ export class SensorySystem extends System {
         senses.currentResource = surfBlock;
         senses.currentResourceAmount = (BLOCK_PROPS[surfBlock].mineable && BLOCK_PROPS[surfBlock].mineYield !== null) ? 1.0 : 0;
 
-        let bestResDSq = Infinity;
+        // Check if creature itself is at water edge — if so, don't point toward more water-edge resources
+        const creatureNearWater = this.isNearWater(cbx, cbz);
+
+        let bestResScore = -Infinity; // scored (lower distance = higher score, water penalty)
         let bestResWX = 0;
         let bestResWZ = 0;
         let bestResType = 0;
@@ -131,18 +136,35 @@ export class SensorySystem extends System {
             const bz = cbz + dz;
             const h = this.voxelWorld.getHeight(bx, bz);
             if (h <= 0) continue;
+
             // Check surface block
             const block = this.voxelWorld.getBlock(bx, h, bz);
-            if (block !== Block.Air && BLOCK_PROPS[block].mineable && BLOCK_PROPS[block].mineYield !== null) {
-              const [wx, , wz] = this.voxelWorld.blockToWorld(bx, h, bz);
-              const dsq = distSq(transform.x, transform.z, wx, wz);
-              if (dsq < bestResDSq) {
-                bestResDSq = dsq;
-                bestResWX = wx;
-                bestResWZ = wz;
-                bestResType = block;
-                foundResource = true;
-              }
+            if (block === Block.Air || !BLOCK_PROPS[block].mineable || BLOCK_PROPS[block].mineYield === null) continue;
+
+            // CRITICAL: Skip resources that require crossing water to reach
+            if ((dx !== 0 || dz !== 0) && this.waterBetweenBlocks(cbx, cbz, bx, bz)) continue;
+
+            const [wx, , wz] = this.voxelWorld.blockToWorld(bx, h, bz);
+            const dsq = distSq(transform.x, transform.z, wx, wz);
+
+            // Score = negative distance (closer = better), with penalties
+            let score = -dsq;
+
+            // If creature is near water, completely skip water-adjacent resources
+            // This prevents the deadlock where creature sees resource across water but can't reach it
+            if (creatureNearWater && this.isNearWater(bx, bz)) continue;
+
+            // Penalize water-edge resources for inland creatures (prefer inland)
+            if (this.isNearWater(bx, bz)) {
+              score -= 200;
+            }
+
+            if (score > bestResScore) {
+              bestResScore = score;
+              bestResWX = wx;
+              bestResWZ = wz;
+              bestResType = block;
+              foundResource = true;
             }
           }
         }
@@ -150,7 +172,8 @@ export class SensorySystem extends System {
         if (foundResource) {
           senses.resourceVisible = true;
           senses.nearestResourceCell = -1;
-          senses.nearestResourceDist = Math.min(1, Math.sqrt(bestResDSq) / SIGHT_RANGE);
+          const resDist = Math.sqrt(distSq(transform.x, transform.z, bestResWX, bestResWZ));
+          senses.nearestResourceDist = Math.min(1, resDist / SIGHT_RANGE);
           senses.nearestResourceType = bestResType;
           senses.nearestResourceAmount = 1.0;
           const ddx = bestResWX - transform.x;
@@ -293,6 +316,45 @@ export class SensorySystem extends System {
         senses.nearestBuildingFaction = -1;
       }
 
+      // ── Campfire sensing (specific) ─────────────────────
+      senses.campfireVisible = false;
+      senses.nearestCampfireId = -1;
+      senses.nearestCampfireDist = 1;
+      senses.nearestCampfireAngle = 0;
+
+      {
+        let bestCfDSq = Infinity;
+        let bestCfId = -1;
+        let bestCfX = 0;
+        let bestCfZ = 0;
+
+        for (const bid of buildings) {
+          const bd = BuildingStore.get(bid)!;
+          if (bd.type !== BuildingType.Campfire) continue;
+          const bt = TransformStore.get(bid)!;
+          const dsqCf = distSq(transform.x, transform.z, bt.x, bt.z);
+          if (dsqCf < bestCfDSq && dsqCf < SIGHT_RANGE_SQ) {
+            bestCfDSq = dsqCf;
+            bestCfId = bid;
+            bestCfX = bt.x;
+            bestCfZ = bt.z;
+          }
+        }
+
+        if (bestCfId >= 0) {
+          senses.campfireVisible = true;
+          senses.nearestCampfireId = bestCfId;
+          senses.nearestCampfireDist = Math.min(1, Math.sqrt(bestCfDSq) / SIGHT_RANGE);
+          const cdx = bestCfX - transform.x;
+          const cdz = bestCfZ - transform.z;
+          const cAngle = Math.atan2(cdx, cdz);
+          let cRelAngle = cAngle - transform.rotation;
+          while (cRelAngle > Math.PI) cRelAngle -= 2 * Math.PI;
+          while (cRelAngle < -Math.PI) cRelAngle += 2 * Math.PI;
+          senses.nearestCampfireAngle = cRelAngle / Math.PI;
+        }
+      }
+
       // ── Threat sensing ──────────────────────────────
       // Enemy creatures nearby = threat
       senses.threatVisible = false;
@@ -420,5 +482,43 @@ export class SensorySystem extends System {
         }
       }
     }
+  }
+
+  /** Check if a block position is within WATER_PENALTY_DIST blocks of water */
+  private isNearWater(bx: number, bz: number): boolean {
+    if (!this.voxelWorld) return false;
+    for (let dx = -WATER_PENALTY_DIST; dx <= WATER_PENALTY_DIST; dx++) {
+      for (let dz = -WATER_PENALTY_DIST; dz <= WATER_PENALTY_DIST; dz++) {
+        if (dx === 0 && dz === 0) continue;
+        const h = this.voxelWorld.getHeight(bx + dx, bz + dz);
+        if (h <= 0) continue;
+        const block = this.voxelWorld.getBlock(bx + dx, h, bz + dz);
+        if (block === Block.Water) return true;
+        if (this.voxelWorld.getBlock(bx + dx, h + 1, bz + dz) === Block.Water) return true;
+      }
+    }
+    return false;
+  }
+
+  /** Bresenham walk from (ax,az) to (bx,bz) checking every column for water */
+  private waterBetweenBlocks(ax: number, az: number, bx: number, bz: number): boolean {
+    if (!this.voxelWorld) return false;
+    const adx = Math.abs(bx - ax);
+    const adz = Math.abs(bz - az);
+    const sx = ax < bx ? 1 : -1;
+    const sz = az < bz ? 1 : -1;
+    let err = adx - adz;
+    let cx = ax, cz = az;
+
+    while (cx !== bx || cz !== bz) {
+      const e2 = err * 2;
+      if (e2 > -adz) { err -= adz; cx += sx; }
+      if (e2 < adx) { err += adx; cz += sz; }
+      // Check this intermediate column for water
+      const h = this.voxelWorld.getHeight(cx, cz);
+      if (this.voxelWorld.getBlock(cx, h, cz) === Block.Water) return true;
+      if (this.voxelWorld.getBlock(cx, h + 1, cz) === Block.Water) return true;
+    }
+    return false;
   }
 }

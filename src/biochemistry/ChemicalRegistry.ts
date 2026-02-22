@@ -26,11 +26,11 @@ export interface ChemicalDef {
 }
 
 export const CHEMICALS: ChemicalDef[] = [
-  { id: ChemId.Hunger,     name: 'Hunger',     halfLife: 1.0,   min: 0, max: 1 },
+  { id: ChemId.Hunger,     name: 'Hunger',     halfLife: 0.999, min: 0, max: 1 },
   { id: ChemId.Energy,     name: 'Energy',     halfLife: 1.0,   min: 0, max: 1 },
   { id: ChemId.Pain,       name: 'Pain',       halfLife: 0.95,  min: 0, max: 1 },
   { id: ChemId.Glucose,    name: 'Glucose',    halfLife: 0.999, min: 0, max: 1 },
-  { id: ChemId.ATP,        name: 'ATP',        halfLife: 0.998, min: 0, max: 1 },
+  { id: ChemId.ATP,        name: 'ATP',        halfLife: 0.999, min: 0, max: 1 },
   { id: ChemId.Reward,     name: 'Reward',     halfLife: 0.90,  min: 0, max: 1 },
   { id: ChemId.Punishment, name: 'Punishment', halfLife: 0.90,  min: 0, max: 1 },
   { id: ChemId.Age,        name: 'Age',        halfLife: 1.0,   min: 0, max: 1 },

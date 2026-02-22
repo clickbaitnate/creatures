@@ -34,10 +34,14 @@ export class GoalSystem extends System {
       const lifecycle = LifecycleStore.get(id);
       if (lifecycle && lifecycle.stage === LifeStage.Dead) continue;
 
-      const goal = GoalStore.get(id)!;
-      const { brain } = BrainStore.get(id)!;
-      const { chemicals } = BiochemStore.get(id)!;
-      const senses = SensesStore.get(id)!;
+      const goal = GoalStore.get(id);
+      const brainData = BrainStore.get(id);
+      const biochemData = BiochemStore.get(id);
+      const senses = SensesStore.get(id);
+      if (!goal || !brainData || !biochemData || !senses) continue;
+
+      const { brain } = brainData;
+      const { chemicals } = biochemData;
       const genomeData = GenomeStore.get(id);
       const inv = InventoryStore.get(id);
       const social = SocialStore.get(id);

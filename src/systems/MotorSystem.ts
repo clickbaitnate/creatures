@@ -13,8 +13,7 @@ import { clamp } from '../utils/Math';
 import { terrainY } from '../world/Environment';
 import type { VoxelWorld } from '../voxel/VoxelWorld';
 import { WORLD_HALF as VOXEL_WORLD_HALF } from '../voxel/VoxelWorld';
-
-const WORLD_HALF = 50;
+import { NEURON_INDICES, TIMERS, THRESHOLDS, MOVEMENT } from '../config/Constants';
 
 // Decision lobe: neurons 48-59
 // 48=moveForward, 49=turnLeft, 50=turnRight, 51=speedMod,
@@ -34,21 +33,27 @@ export class MotorSystem extends System {
       const lifecycle = LifecycleStore.get(id);
       if (lifecycle && lifecycle.stage === LifeStage.Dead) continue;
 
-      const { brain } = BrainStore.get(id)!;
-      const motor = MotorStore.get(id)!;
-      const transform = TransformStore.get(id)!;
-      const { genome } = GenomeStore.get(id)!;
+      const motor = MotorStore.get(id);
+      if (!motor || motor.godHeld) continue; // God hand is carrying this creature
+
+      const brainData = BrainStore.get(id);
+      const transform = TransformStore.get(id);
+      const genomeData = GenomeStore.get(id);
+      if (!brainData || !transform || !genomeData) continue;
+
+      const { brain } = brainData;
+      const { genome } = genomeData;
       const biochem = BiochemStore.get(id);
 
       // Read Decision lobe outputs (neurons 48-59)
-      const moveForward = brain.outputs[48];
-      const turnLeft = brain.outputs[49];
-      const turnRight = brain.outputs[50];
-      const speedMod = brain.outputs[51];
-      const eat = brain.outputs[52];
-      const gather = brain.outputs[53];
-      const hunt = brain.outputs[54];
-      const build = brain.outputs[55];
+      const moveForward = brain.outputs[NEURON_INDICES.DECISION_MOVE_FORWARD];
+      const turnLeft = brain.outputs[NEURON_INDICES.DECISION_TURN_LEFT];
+      const turnRight = brain.outputs[NEURON_INDICES.DECISION_TURN_RIGHT];
+      const speedMod = brain.outputs[NEURON_INDICES.DECISION_SPEED_MOD];
+      const eat = brain.outputs[NEURON_INDICES.DECISION_EAT];
+      const gather = brain.outputs[NEURON_INDICES.DECISION_GATHER];
+      const hunt = brain.outputs[NEURON_INDICES.DECISION_HUNT];
+      const build = brain.outputs[NEURON_INDICES.DECISION_BUILD];
 
       motor.forward = clamp(moveForward, 0, 2);
       motor.turnLeft = clamp(turnLeft, 0, 2);
@@ -58,6 +63,25 @@ export class MotorSystem extends System {
       motor.wantGather = gather > 0.5;
       motor.wantHunt = hunt > 0.5;
       motor.wantBuild = build > 0.5;
+
+      // Stuck detection: if barely moved in N ticks, force a wander burst
+      const dx = transform.x - motor.lastX;
+      const dz = transform.z - motor.lastZ;
+      if (dx * dx + dz * dz < THRESHOLDS.STUCK_DISTANCE_SQ) {
+        motor.stuckTimer++;
+      } else {
+        motor.stuckTimer = 0;
+        motor.lastX = transform.x;
+        motor.lastZ = transform.z;
+      }
+      if (motor.stuckTimer >= TIMERS.STUCK_THRESHOLD) {
+        // Force a random wander burst to break deadlock
+        transform.rotation = Math.random() * Math.PI * 2;
+        motor.forward = MOVEMENT.STUCK_BURST_FORWARD;
+        motor.stuckTimer = 0;
+        motor.lastX = transform.x;
+        motor.lastZ = transform.z;
+      }
 
       // Apply rotation
       const netTurn = (motor.turnRight - motor.turnLeft) * genome.turnRate * dt;
@@ -84,7 +108,7 @@ export class MotorSystem extends System {
         }
       }
 
-      // Water barrier check: block movement into water unless creature has a boat
+      // Water barrier: block movement into water, retreat toward land
       if (this.voxelWorld) {
         const nextX = transform.x + Math.sin(transform.rotation) * moveSpeed;
         const nextZ = transform.z + Math.cos(transform.rotation) * moveSpeed;
@@ -92,12 +116,13 @@ export class MotorSystem extends System {
           const inv = InventoryStore.get(id);
           const hasBoat = inv ? countItem(inv, ItemType.Boat) > 0 : false;
           if (!hasBoat) {
-            // Block movement, turn creature away
-            transform.rotation += Math.PI * 0.5 + Math.random() * Math.PI;
-            moveSpeed = 0;
+            // Find dry direction: scan 8 directions, pick best land angle
+            const landAngle = this.findLandDirection(transform.x, transform.z, transform.rotation);
+            transform.rotation = landAngle;
+            // Push inland with guaranteed minimum movement
+            moveSpeed = Math.max(moveSpeed, MOVEMENT.MIN_MOVE_SPEED);
           } else {
-            // Boat: allow crossing at 50% speed
-            moveSpeed *= 0.5;
+            moveSpeed *= MOVEMENT.WATER_MOVE_PENALTY;
           }
         }
       }
@@ -105,18 +130,19 @@ export class MotorSystem extends System {
       transform.x += Math.sin(transform.rotation) * moveSpeed;
       transform.z += Math.cos(transform.rotation) * moveSpeed;
 
-      // Snap to terrain height — use voxel world if available, else fallback to terrainY
+      // Snap to terrain height
       if (this.voxelWorld) {
         transform.y = this.voxelWorld.getHeightWorld(transform.x, transform.z);
 
-        // If creature is standing on water and has no boat, turn randomly and flee at 2x speed
+        // Emergency: standing on water without boat — deterministic inland push
         if (this.voxelWorld.isWaterAt(transform.x, transform.z)) {
           const inv = InventoryStore.get(id);
           const hasBoat = inv ? countItem(inv, ItemType.Boat) > 0 : false;
           if (!hasBoat) {
-            transform.rotation += Math.PI * (0.5 + Math.random());
-            transform.x += Math.sin(transform.rotation) * 0.1;
-            transform.z += Math.cos(transform.rotation) * 0.1;
+            const escAngle = this.findLandDirection(transform.x, transform.z, transform.rotation);
+            transform.rotation = escAngle;
+            transform.x += Math.sin(escAngle) * 0.2;
+            transform.z += Math.cos(escAngle) * 0.2;
           }
         }
       } else {
@@ -124,7 +150,7 @@ export class MotorSystem extends System {
       }
 
       // Keep in bounds — use voxel world bounds if available
-      const halfBound = this.voxelWorld ? VOXEL_WORLD_HALF : WORLD_HALF;
+      const halfBound = this.voxelWorld ? VOXEL_WORLD_HALF : MOVEMENT.WORLD_HALF;
       if (transform.x < -halfBound || transform.x > halfBound) {
         transform.x = clamp(transform.x, -halfBound, halfBound);
         transform.rotation = Math.PI - transform.rotation;
@@ -155,5 +181,31 @@ export class MotorSystem extends System {
         biochem.chemicals[ChemId.ATP] = Math.max(0, biochem.chemicals[ChemId.ATP] - cost);
       }
     }
+  }
+
+  /** Scan 8 directions and return the angle pointing furthest from water */
+  private findLandDirection(x: number, z: number, currentRot: number): number {
+    if (!this.voxelWorld) return currentRot + Math.PI;
+    let bestAngle = currentRot + Math.PI; // default: 180° turn
+    let bestDist = 0;
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      // Check at 1, 2, 3 units out — find direction with most land
+      let landDist = 0;
+      for (let r = 1; r <= 3; r++) {
+        const tx = x + Math.sin(angle) * r;
+        const tz = z + Math.cos(angle) * r;
+        if (!this.voxelWorld.isWaterAt(tx, tz)) {
+          landDist = r;
+        } else {
+          break;
+        }
+      }
+      if (landDist > bestDist) {
+        bestDist = landDist;
+        bestAngle = angle;
+      }
+    }
+    return bestAngle;
   }
 }

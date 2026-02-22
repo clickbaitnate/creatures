@@ -5,8 +5,9 @@
 import * as THREE from 'three';
 import { VoxelWorld, CHUNKS_X, CHUNKS_Z, CHUNK_W, CHUNK_D, BLOCK_SIZE } from './VoxelWorld';
 import { meshChunk } from './ChunkMesher';
+import { createTerrainAtlas } from './BlockTextures';
 
-const MAX_REBUILDS_PER_FRAME = 4;
+const MAX_REBUILDS_PER_FRAME = 12;
 const VIEW_DIST = 10; // chunks around camera
 
 export class VoxelRenderer {
@@ -15,19 +16,24 @@ export class VoxelRenderer {
   private chunkMeshes: (THREE.Mesh | null)[];
   private waterMeshes: (THREE.Mesh | null)[];
   private material: THREE.MeshLambertMaterial;
+  private atlasTexture: THREE.CanvasTexture;
   private waterMaterial: THREE.MeshStandardMaterial;
   private loadedSet = new Set<number>();
   private camCX = -999;
   private camCZ = -999;
+  private rebuildOffset = 0; // rotate through loaded chunks to prevent starvation
 
   constructor(world: VoxelWorld, scene: THREE.Scene) {
     this.world = world;
     this.scene = scene;
     this.chunkMeshes = new Array(CHUNKS_X * CHUNKS_Z).fill(null);
     this.waterMeshes = new Array(CHUNKS_X * CHUNKS_Z).fill(null);
+    this.atlasTexture = createTerrainAtlas();
     this.material = new THREE.MeshLambertMaterial({
       vertexColors: true,
+      map: this.atlasTexture,
       side: THREE.FrontSide,
+      alphaTest: 0.5,
     });
     this.waterMaterial = new THREE.MeshStandardMaterial({
       vertexColors: true,
@@ -41,6 +47,9 @@ export class VoxelRenderer {
   }
 
   buildAll(): void {
+    // Force camera update by resetting position so it doesn't early-return
+    this.camCX = -999;
+    this.camCZ = -999;
     this.updateCamera(0, 0);
   }
 
@@ -80,8 +89,15 @@ export class VoxelRenderer {
 
   rebuildDirty(): void {
     let rebuilt = 0;
-    for (const idx of this.loadedSet) {
+    // Convert to array so we can rotate the starting position,
+    // preventing chunks at the end from being starved of rebuilds
+    const loaded = Array.from(this.loadedSet);
+    const len = loaded.length;
+    if (len === 0) return;
+    this.rebuildOffset = this.rebuildOffset % len;
+    for (let i = 0; i < len; i++) {
       if (rebuilt >= MAX_REBUILDS_PER_FRAME) break;
+      const idx = loaded[(i + this.rebuildOffset) % len];
       if (this.world.chunks[idx].dirty) {
         const gcx = idx % CHUNKS_X;
         const gcz = Math.floor(idx / CHUNKS_X);
@@ -89,6 +105,8 @@ export class VoxelRenderer {
         rebuilt++;
       }
     }
+    // Advance offset so next frame starts from a different position
+    if (rebuilt > 0) this.rebuildOffset = (this.rebuildOffset + rebuilt) % len;
   }
 
   private rebuildChunk(cx: number, cz: number): void {
@@ -142,6 +160,7 @@ export class VoxelRenderer {
       this.disposeChunk(i);
     }
     this.loadedSet.clear();
+    this.atlasTexture.dispose();
     this.material.dispose();
     this.waterMaterial.dispose();
   }
