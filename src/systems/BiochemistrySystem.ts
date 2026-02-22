@@ -3,6 +3,7 @@ import type { World } from '../ecs/World';
 import { BiochemStore } from '../components/Biochemistry';
 import { GenomeStore } from '../components/Genome';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
+import { InventoryStore, totalItems, MAX_SLOTS, MAX_STACK } from '../components/Inventory';
 import { ChemId, CHEMICALS } from '../biochemistry/ChemicalRegistry';
 import { clamp } from '../utils/Math';
 import type { SeasonState } from '../world/Seasons';
@@ -59,6 +60,12 @@ export class BiochemistrySystem extends System {
       if (chemicals[ChemId.Energy] <= 0 && chemicals[ChemId.ATP] <= 0) {
         chemicals[ChemId.LifeForce] -= 0.002; // actually starving
       }
+
+      // Scarcity → Anxiety: hunger + low glucose + low energy + empty inventory
+      const inv = InventoryStore.get(id);
+      const invFullness = inv ? totalItems(inv) / (MAX_SLOTS * MAX_STACK) : 0;
+      const scarcity = chemicals[ChemId.Hunger] + (1 - chemicals[ChemId.Glucose]) + (1 - chemicals[ChemId.Energy]) + (1 - invFullness);
+      chemicals[ChemId.Anxiety] = clamp(chemicals[ChemId.Anxiety] + scarcity * 0.005 - 0.002, 0, 1);
 
       // Age increases
       chemicals[ChemId.Age] += 0.0001;

@@ -7,6 +7,7 @@ import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { InventoryStore, removeItem, ItemType } from '../components/Inventory';
 import { SocialStore, Activity } from '../components/Social';
 import { TransformStore } from '../components/Transform';
+import { VocabularyStore, ITEM_EMOJI, learn } from '../components/Vocabulary';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
 import { clamp } from '../utils/Math';
 import { inBabelZone } from '../world/BabelZone';
@@ -48,7 +49,7 @@ export class EatingSystem extends System {
       if (transform && inBabelZone(transform.x, transform.z)) continue;
 
       // Auto-eat when hungry (don't require brain signal)
-      const hungry = chemicals[ChemId.Hunger] > 0.3;
+      const hungry = chemicals[ChemId.Hunger] > 0.2;
       if (!motor.wantEat && !hungry) continue;
 
       const inv = InventoryStore.get(id)!;
@@ -77,11 +78,20 @@ export class EatingSystem extends System {
         chemicals[ChemId.Glucose] = clamp(chemicals[ChemId.Glucose] + gained, 0, 1);
         chemicals[ChemId.Reward] = clamp(chemicals[ChemId.Reward] + 0.15 * efficiency, 0, 1);
 
+        // Vocabulary: learn food emoji and eating emoji
+        const vocab = VocabularyStore.get(id);
+        if (vocab) {
+          learn(vocab, '🍽️');
+          const foodEmoji = ITEM_EMOJI[item];
+          if (foodEmoji) learn(vocab, foodEmoji);
+        }
+
         // Activity and speech feedback
         const social = SocialStore.get(id);
         if (social) {
           social.activity = Activity.Eating;
-          if (Math.random() < 0.25) {
+          if (Math.random() < 0.25 && vocab) {
+            learn(vocab, '😋');
             social.speechEmoji = '😋';
             social.speechTimer = 25;
           }

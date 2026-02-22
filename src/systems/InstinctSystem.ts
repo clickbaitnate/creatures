@@ -10,14 +10,19 @@ import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { InventoryStore, hasSpace, hasFood, countItem, ItemType } from '../components/Inventory';
 import { SocialStore, Activity } from '../components/Social';
 import { ExpressionStore } from '../components/Expression';
+import { ZealotryStore } from '../components/Zealotry';
+import { VocabularyStore, knows } from '../components/Vocabulary';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
 import { GoalStore, GoalType } from '../components/Goal';
 import type { MemoryData } from '../components/Memory';
 import { MemoryStore, MemoryType } from '../components/Memory';
 import type { SeasonState } from '../world/Seasons';
 import { Season } from '../world/Seasons';
-import { inBabelZone } from '../world/BabelZone';
 import type { FactionManager } from '../world/FactionSystem';
+import type { MonsterManager } from '../world/MonsterManager';
+import type { DayNightState } from '../world/DayNightCycle';
+import type { VoxelWorld } from '../voxel/VoxelWorld';
+import { Block } from '../voxel/BlockTypes';
 
 // Decision lobe: neurons 48-59
 // 48=moveForward, 49=turnLeft, 50=turnRight, 51=speedMod,
@@ -30,6 +35,9 @@ export class InstinctSystem extends System {
 
   seasonState: SeasonState | null = null;
   factionManager: FactionManager | null = null;
+  monsterManager: MonsterManager | null = null;
+  dayNight: DayNightState | null = null;
+  voxelWorld: VoxelWorld | null = null;
 
   update(world: World, _dt: number): void {
     const entities = world.query(this.query);
@@ -101,27 +109,7 @@ export class InstinctSystem extends System {
         }
       }
 
-      // Babel exclusion zone: hungry creatures get strong outward push
       const transform = TransformStore.get(id);
-      if (transform && inBabelZone(transform.x, transform.z) && hunger > 0.5) {
-        // Radial outward push
-        const dist = Math.sqrt(transform.x * transform.x + transform.z * transform.z);
-        if (dist > 0.1) {
-          const outAngle = Math.atan2(transform.x, transform.z); // angle away from center
-          let relAngle = outAngle - transform.rotation;
-          while (relAngle > Math.PI) relAngle -= 2 * Math.PI;
-          while (relAngle < -Math.PI) relAngle += 2 * Math.PI;
-          const nav = relAngle / Math.PI;
-          brain.outputs[48] += 0.8; // strong forward
-          if (nav < -0.1) brain.outputs[49] += 0.6; // turn toward outward
-          else if (nav > 0.1) brain.outputs[50] += 0.6;
-          brain.outputs[51] += 0.4; // speed boost
-        }
-        // Suppress gather/eat, boost build
-        brain.outputs[52] *= 0.1; // suppress eat
-        brain.outputs[53] *= 0.1; // suppress gather
-        brain.outputs[55] += 0.4; // boost build at Babel
-      }
 
       // Migration instinct: strong pull toward faction migration target
       if (transform && this.factionManager && social) {
@@ -346,11 +334,168 @@ export class InstinctSystem extends System {
         }
       }
 
+      // Instinct 18: Fight-or-flight against monsters
+      if (senses.monsterVisible && transform) {
+        const monsterDist = senses.nearestMonsterDist; // 0-1 normalized
+        const monsterAngle = senses.nearestMonsterAngle; // -1 to 1
+        const urgency = 1.0 - monsterDist;
+
+        // Determine if creature fights or flees:
+        // Fight if: has weapon, OR high aggression, OR many allies nearby
+        const hasWeapon = inv ? (countItem(inv, ItemType.WoodSword) > 0 || countItem(inv, ItemType.StoneSword) > 0 || countItem(inv, ItemType.IronSword) > 0 || countItem(inv, ItemType.StoneAxe) > 0 || countItem(inv, ItemType.StonePick) > 0) : false;
+        const aggroBoost = genome ? genome.aggression : 0;
+        const alliesNearby = senses.nearbyFactionCount;
+        const courageFromAllies = Math.min(1, alliesNearby * 0.15); // 0.15 per ally, caps at 1
+        const fightScore = (hasWeapon ? 0.5 : 0) + aggroBoost * 0.4 + courageFromAllies + anger * 0.3;
+        const fleeScore = fear * 0.6 + (1 - (genome?.aggression ?? 0)) * 0.3 + (energy < 0.2 ? 0.4 : 0);
+
+        if (fightScore > fleeScore && monsterDist < 0.5) {
+          // FIGHT: approach monster and attack
+          if (motor) motor.wantFightMonster = true;
+
+          // Turn toward monster
+          brain.outputs[48] += urgency * 0.6; // charge forward
+          if (monsterAngle < -0.1) brain.outputs[49] += urgency * 0.4;
+          else if (monsterAngle > 0.1) brain.outputs[50] += urgency * 0.4;
+          brain.outputs[51] += 0.3; // speed boost
+
+          // Set fighting activity
+          if (social) social.activity = Activity.Fighting;
+        } else {
+          // FLEE: run away from monster
+          if (motor) motor.wantFightMonster = false;
+
+          const fleeBoost = 1.0 + fear * 0.5;
+          // Turn AWAY from monster (opposite of angle)
+          brain.outputs[48] += urgency * 0.7 * fleeBoost;
+          if (monsterAngle > 0) brain.outputs[49] += urgency * 0.5 * fleeBoost;
+          else brain.outputs[50] += urgency * 0.5 * fleeBoost;
+          brain.outputs[51] += urgency * 0.5 * fleeBoost; // speed boost
+
+          // Flee toward shelter if visible
+          if (senses.buildingVisible) {
+            brain.outputs[48] += 0.4;
+          }
+        }
+
+        // Rally: if ally within range is near a monster, boost approach
+        if (alliesNearby > 0 && fightScore > fleeScore * 0.8) {
+          brain.outputs[48] += 0.3; // move toward the action
+          brain.outputs[59] += 0.3; // patrol (defend)
+        }
+
+        // Boost anxiety from monster presence
+        const biochem3 = BiochemStore.get(id);
+        if (biochem3) {
+          biochem3.chemicals[ChemId.Punishment] = Math.min(1,
+            biochem3.chemicals[ChemId.Punishment] + urgency * 0.003);
+        }
+      } else {
+        if (motor) motor.wantFightMonster = false;
+      }
+
+      // Instinct 19: Anxiety → violence/isolation
+      const anxiety = expr?.anxiety ?? 0;
+      if (anxiety > 0.3 && genome) {
+        // Anxiety + aggression → boost fight/patrol
+        brain.outputs[59] += anxiety * genome.aggression * 0.5; // patrol
+        brain.outputs[48] += anxiety * 0.2; // restless movement
+      }
+      if (anxiety > 0.6) {
+        // High anxiety → suppress trade (isolating behavior)
+        brain.outputs[58] *= 0.3; // trade output
+      }
+
+      // Instinct 20: Tech discovery nudges
+      if (transform && this.voxelWorld) {
+        // Near CraftingTable + has raw materials → boost craft desire
+        if (inv && genome) {
+          const hasMaterials = countItem(inv, ItemType.RawStone) >= 2 || countItem(inv, ItemType.RawWood) >= 2;
+          if (hasMaterials && this.nearCraftingTable(transform.x, transform.z)) {
+            brain.outputs[56] += 0.5; // craft
+          }
+        }
+
+        // Stuck at water edge (water ahead) → frustration, boost build/craft
+        if (this.voxelWorld.isWaterAt(
+          transform.x + Math.sin(transform.rotation) * 1.0,
+          transform.z + Math.cos(transform.rotation) * 1.0,
+        )) {
+          brain.outputs[55] += 0.3; // build
+          brain.outputs[56] += 0.3; // craft
+          // Increase anxiety (frustration)
+          const biochem2 = BiochemStore.get(id);
+          if (biochem2) {
+            biochem2.chemicals[ChemId.Anxiety] = Math.min(1,
+              biochem2.chemicals[ChemId.Anxiety] + 0.002);
+          }
+        }
+      }
+
+      // Night + no shelter/torch nearby → amplified fear, stronger build/craft
+      if (this.dayNight?.isNight && transform) {
+        if (!senses.buildingVisible) {
+          brain.outputs[55] += 0.4; // build shelter
+          brain.outputs[56] += 0.3; // craft weapons/tools
+          // Amplified fear at night without shelter
+          const biochem3 = BiochemStore.get(id);
+          if (biochem3) {
+            biochem3.chemicals[ChemId.Punishment] = Math.min(1,
+              biochem3.chemicals[ChemId.Punishment] + 0.001);
+          }
+        }
+      }
+
+      // Instinct 21: Contextual building urges
+      if (motor && genome) {
+        // Night + no shelter visible → strong build urge
+        if (this.dayNight?.isNight && !senses.buildingVisible && genome.buildAffinity > 0.15) {
+          motor.wantBuild = true;
+          brain.outputs[55] += 0.5;
+        }
+
+        // Recently attacked by monsters → build defenses
+        if (this.dayNight?.isNight && senses.threatVisible && genome.buildAffinity > 0.1) {
+          motor.wantBuild = true;
+        }
+
+        // Low food + knows farming emoji → build farm
+        const vocab = VocabularyStore.get(id);
+        if (hunger > 0.4 && vocab && knows(vocab, '🌾') && genome.gatherAffinity > 0.3) {
+          motor.wantBuild = true;
+          brain.outputs[55] += 0.3;
+        }
+
+        // High zealotry → build monuments/shrines
+        const zealotry = ZealotryStore.get(id);
+        if (zealotry && zealotry.zealotry > 0.6 && genome.buildAffinity > 0.2) {
+          motor.wantBuild = true;
+          brain.outputs[55] += 0.3;
+        }
+      }
+
       // Apply tiredness damper to all decision outputs
       for (let d = 48; d < 60; d++) {
         brain.outputs[d] *= tirednessDamper;
       }
     }
+  }
+
+  private nearCraftingTable(wx: number, wz: number): boolean {
+    if (!this.voxelWorld) return false;
+    const [bx, , bz] = this.voxelWorld.worldToBlock(wx, 0, wz);
+    const r = 3;
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dz = -r; dz <= r; dz++) {
+        const h = this.voxelWorld.getHeight(bx + dx, bz + dz);
+        for (let dy = 0; dy <= 3; dy++) {
+          if (this.voxelWorld.getBlock(bx + dx, h + dy, bz + dz) === Block.CraftingTable) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 
   private applyMemoryInstincts(

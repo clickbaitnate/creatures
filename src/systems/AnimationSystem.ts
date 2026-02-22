@@ -5,7 +5,8 @@ import { RenderableStore } from '../components/Renderable';
 import { SocialStore, Activity } from '../components/Social';
 import { MotorStore } from '../components/Motor';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
-import { InventoryStore } from '../components/Inventory';
+import { InventoryStore, ItemType } from '../components/Inventory';
+import { attachToolMesh } from '../creatures/MeshBuilder';
 
 // Procedural creature animations driven by Activity state.
 // Finds named children in the creature group and applies per-frame transforms.
@@ -17,6 +18,7 @@ interface AnimState {
   eatPhase: number;      // oscillator for eating
   fightPhase: number;    // oscillator for fighting lunge
   matePhase: number;     // oscillator for mating dance
+  lastTool: number;      // last equipped tool type for change detection
 }
 
 const animStates = new Map<number, AnimState>();
@@ -24,7 +26,7 @@ const animStates = new Map<number, AnimState>();
 function getState(id: number): AnimState {
   let s = animStates.get(id);
   if (!s) {
-    s = { walkPhase: 0, gatherPhase: 0, buildPhase: 0, eatPhase: 0, fightPhase: 0, matePhase: 0 };
+    s = { walkPhase: 0, gatherPhase: 0, buildPhase: 0, eatPhase: 0, fightPhase: 0, matePhase: 0, lastTool: -1 };
     animStates.set(id, s);
   }
   return s;
@@ -79,15 +81,15 @@ export class AnimationSystem extends System {
 
       switch (activity) {
         case Activity.Walking: {
-          // Walk cycle — swing legs and arms opposite
+          // Walk cycle — swing legs and arms opposite (reduced for blocky limbs)
           const speed = motor ? motor.forward * 8 : 4;
           state.walkPhase += dt * speed;
-          const swing = Math.sin(state.walkPhase) * 0.4;
+          const swing = Math.sin(state.walkPhase) * 0.3;
 
           if (legL) legL.rotation.x = swing;
           if (legR) legR.rotation.x = -swing;
-          if (armL) armL.rotation.x = -swing * 0.6;
-          if (armR) armR.rotation.x = swing * 0.6;
+          if (armL) armL.rotation.x = -swing * 0.45;
+          if (armR) armR.rotation.x = swing * 0.45;
 
           // Subtle body bob
           if (torso) torso.rotation.x = Math.sin(state.walkPhase * 2) * 0.03;
@@ -215,6 +217,15 @@ export class AnimationSystem extends System {
             head.rotation.y += Math.sin(idlePhase * 0.3 + id) * 0.05;
           }
           break;
+        }
+      }
+
+      // Update equipped tool visual
+      if (inv) {
+        const currentTool = inv.equippedTool;
+        if (currentTool !== state.lastTool) {
+          state.lastTool = currentTool;
+          attachToolMesh(object, currentTool as ItemType);
         }
       }
     }

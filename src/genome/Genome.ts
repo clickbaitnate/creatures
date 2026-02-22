@@ -70,6 +70,10 @@ export interface CreatureGenome {
   monogamy: number;            // 0=promiscuous, 1=strictly pair-bonded
   mateSelectiveness: number;   // 0=mates with anyone, 1=extremely picky
 
+  // Building evolution
+  buildingMutationRate: number;   // 0-0.3 — how much buildings deviate from template
+  buildingMaterialPref: number;   // 0=wood-heavy, 1=stone-heavy
+
   // Species marker — used for genetic distance
   speciesMarker: number[];  // 8 float values that drift via mutation
 
@@ -180,6 +184,9 @@ export function createDefaultGenome(): CreatureGenome {
     displayIntensity: randFloat(0.1, 0.9),
     monogamy: randFloat(0, 1),
     mateSelectiveness: randFloat(0.1, 0.8),
+
+    buildingMutationRate: randFloat(0, 0.3),
+    buildingMaterialPref: randFloat(0, 1),
 
     speciesMarker: Array.from({ length: 8 }, () => randFloat(0, 1)),
 

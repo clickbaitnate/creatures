@@ -12,9 +12,10 @@ export const enum ChemId {
   Age       = 7,
   LifeForce = 8,
   Tiredness = 9,
+  Anxiety   = 10,
 }
 
-export const CHEMICAL_COUNT = 10;
+export const CHEMICAL_COUNT = 11;
 
 export interface ChemicalDef {
   id: number;
@@ -35,4 +36,5 @@ export const CHEMICALS: ChemicalDef[] = [
   { id: ChemId.Age,        name: 'Age',        halfLife: 1.0,   min: 0, max: 1 },
   { id: ChemId.LifeForce,  name: 'LifeForce',  halfLife: 1.0,   min: 0, max: 1 },
   { id: ChemId.Tiredness,  name: 'Tiredness',  halfLife: 0.99,  min: 0, max: 1 },
+  { id: ChemId.Anxiety,    name: 'Anxiety',    halfLife: 0.93,  min: 0, max: 1 },
 ];

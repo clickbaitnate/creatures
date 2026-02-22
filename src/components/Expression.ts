@@ -9,6 +9,7 @@ export interface ExpressionData {
   curiosity: number;
   tiredness: number;
   pain: number;
+  anxiety: number;
 
   // Computed mood: -1 (miserable) to +1 (elated)
   mood: number;
@@ -47,6 +48,7 @@ export function createExpression(): ExpressionData {
     curiosity: 0,
     tiredness: 0,
     pain: 0,
+    anxiety: 0,
     mood: 0,
     dominant: 'neutral',
     meshRefs: null,

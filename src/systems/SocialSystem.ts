@@ -8,6 +8,7 @@ import { SensesStore } from '../components/Senses';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { ExpressionStore } from '../components/Expression';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
+import { InventoryStore, getBestWeapon, getArmorReduction } from '../components/Inventory';
 import { distSq, clamp } from '../utils/Math';
 import type { FactionManager } from '../world/FactionSystem';
 import type { HierarchySystem } from '../world/HierarchySystem';
@@ -17,6 +18,7 @@ import {
   emotionEmoji, pick,
 } from '../world/EmojiVocabulary';
 import { MemoryStore, MemoryType } from '../components/Memory';
+import { VocabularyStore, learn, pickKnown, learnAndPick } from '../components/Vocabulary';
 import type { SeasonState } from '../world/Seasons';
 import { Season } from '../world/Seasons';
 
@@ -56,8 +58,11 @@ export class SocialSystem extends System {
           const social = SocialStore.get(memberId);
           if (social) {
             social.factionId = newClan.id;
-            social.speechEmoji = pick(EMOTIONS.pride);
-            social.speechTimer = 60;
+            const vocab = VocabularyStore.get(memberId);
+            if (vocab) {
+              social.speechEmoji = learnAndPick(vocab, EMOTIONS.pride);
+              social.speechTimer = 60;
+            }
           }
         }
       }
@@ -73,6 +78,7 @@ export class SocialSystem extends System {
       const biochem = BiochemStore.get(id);
       const senses = SensesStore.get(id);
       const expr = ExpressionStore.get(id);
+      const vocab = VocabularyStore.get(id);
 
       // Decrement timers
       if (social.speechTimer > 0) social.speechTimer--;
@@ -123,11 +129,32 @@ export class SocialSystem extends System {
         // Same faction: friendly interactions
         if (myFaction === theirFaction) {
           if (Math.random() < genome.sociability * 0.1) {
-            // Choose emoji based on emotional state
-            social.speechEmoji = this.contextualSpeech(id, 'friendly', expr, biochem);
-            social.speechTimer = 50;
+            // Choose emoji based on emotional state — vocab-gated
+            const speech = vocab ? this.contextualSpeech(vocab, 'friendly', expr, biochem) : null;
+            if (speech) {
+              social.speechEmoji = speech;
+              social.speechTimer = 50;
+            }
             social.activity = Activity.Talking;
             this.talkTimers.set(id, TALK_COOLDOWN);
+
+            // Vocabulary sharing: each creature learns 1-2 random emojis from the other
+            const myVocab = VocabularyStore.get(id);
+            const theirVocab = VocabularyStore.get(otherId);
+            if (myVocab && theirVocab) {
+              const theirKnown = Array.from(theirVocab.known);
+              const myKnown = Array.from(myVocab.known);
+              // I learn from them
+              for (let vi = 0; vi < 2 && theirKnown.length > 0; vi++) {
+                const pick = theirKnown[Math.floor(Math.random() * theirKnown.length)];
+                learn(myVocab, pick);
+              }
+              // They learn from me
+              for (let vi = 0; vi < 2 && myKnown.length > 0; vi++) {
+                const pick = myKnown[Math.floor(Math.random() * myKnown.length)];
+                learn(theirVocab, pick);
+              }
+            }
 
             // Record positive bond
             this.factionManager?.recordInteraction(id, otherId, true);
@@ -136,8 +163,13 @@ export class SocialSystem extends System {
         // Allied faction
         else if (relation > 0.3) {
           if (Math.random() < genome.sociability * 0.05) {
-            social.speechEmoji = Math.random() < 0.5 ? pick(ACTIVITIES.trade) : pick(SOCIAL_SPEECH.greet);
-            social.speechTimer = 50;
+            const speech = vocab
+              ? (Math.random() < 0.5 ? pickKnown(vocab, ACTIVITIES.trade) : pickKnown(vocab, SOCIAL_SPEECH.greet))
+              : null;
+            if (speech) {
+              social.speechEmoji = speech;
+              social.speechTimer = 50;
+            }
             social.activity = Activity.Talking;
             this.talkTimers.set(id, TALK_COOLDOWN);
             // Strengthen alliance
@@ -153,22 +185,47 @@ export class SocialSystem extends System {
         else if (relation < -0.3) {
           const atWar = this.politicsSystem?.isAtWar(myFaction, theirFaction) ?? false;
           if (dsq < FIGHT_RANGE_SQ && social.attackCooldown <= 0) {
-            // Fight! Higher aggression during war
-            const fightChance = atWar ? genome.aggression * 0.3 : genome.aggression * 0.15;
+            // Fight! Higher aggression during war. Anxiety boosts fight chance.
+            const anxietyBoost = expr ? expr.anxiety * 0.1 : 0;
+            const fightChance = (atWar ? genome.aggression * 0.3 : genome.aggression * 0.15) + anxietyBoost;
             if (Math.random() < fightChance) {
-              social.speechEmoji = pick(EMOTIONS.rage);
-              social.speechTimer = 35;
+              if (vocab) {
+                social.speechEmoji = learnAndPick(vocab, EMOTIONS.rage);
+                social.speechTimer = 35;
+              }
               social.activity = Activity.Fighting;
               social.attackTarget = otherId;
               social.attackCooldown = FIGHT_COOLDOWN;
 
-              // Deal damage
-              otherSocial.health = clamp(otherSocial.health - 0.08 * genome.aggression, 0, 1);
+              // Deal damage — apply weapon multiplier and armor reduction
+              const inv = InventoryStore.get(id);
+              const otherInv = InventoryStore.get(otherId);
+              let weaponMult = 1.0;
+              let armorReduce = 0;
+              if (inv) {
+                const best = getBestWeapon(inv);
+                weaponMult = best.damage;
+              }
+              if (otherInv) {
+                armorReduce = getArmorReduction(otherInv);
+              }
+              const rawDmg = 0.08 * genome.aggression * weaponMult;
+              const finalDmg = rawDmg * (1 - armorReduce);
+              otherSocial.health = clamp(otherSocial.health - finalDmg, 0, 1);
               if (biochem) biochem.chemicals[ChemId.Pain] = clamp(biochem.chemicals[ChemId.Pain] + 0.1, 0, 1);
 
+              // Vocabulary: fighting teaches combat emojis
+              const myVocab2 = VocabularyStore.get(id);
+              if (myVocab2) learn(myVocab2, '⚔️');
+              const theirVocab2 = VocabularyStore.get(otherId);
+              if (theirVocab2 && armorReduce > 0) learn(theirVocab2, '🛡️');
+
               // Other retaliates with speech
-              otherSocial.speechEmoji = pick(EMOTIONS.anger);
-              otherSocial.speechTimer = 30;
+              const otherVocab = VocabularyStore.get(otherId);
+              if (otherVocab) {
+                otherSocial.speechEmoji = learnAndPick(otherVocab, EMOTIONS.anger);
+                otherSocial.speechTimer = 30;
+              }
 
               // Worsen relations
               if (this.factionManager) {
@@ -182,8 +239,13 @@ export class SocialSystem extends System {
           } else {
             // Threaten from distance
             if (Math.random() < genome.aggression * 0.05) {
-              social.speechEmoji = pick(SOCIAL_SPEECH.warning);
-              social.speechTimer = 40;
+              if (vocab) {
+                const warn = pickKnown(vocab, SOCIAL_SPEECH.warning);
+                if (warn) {
+                  social.speechEmoji = warn;
+                  social.speechTimer = 40;
+                }
+              }
               this.talkTimers.set(id, TALK_COOLDOWN);
 
               // Record negative bond
@@ -201,8 +263,13 @@ export class SocialSystem extends System {
               this.factionManager.setRelation(myFaction, theirFaction,
                 clamp(relation + willBecome, -1, 1));
             }
-            social.speechEmoji = willBecome > 0 ? pick(SOCIAL_SPEECH.greet) : pick(EMOTIONS.nervous);
-            social.speechTimer = 45;
+            if (vocab) {
+              const speech = willBecome > 0 ? pickKnown(vocab, SOCIAL_SPEECH.greet) : pickKnown(vocab, EMOTIONS.nervous);
+              if (speech) {
+                social.speechEmoji = speech;
+                social.speechTimer = 45;
+              }
+            }
             this.talkTimers.set(id, TALK_COOLDOWN * 2);
 
             // Record bond based on outcome
@@ -229,10 +296,17 @@ export class SocialSystem extends System {
             const otherBiochem2 = BiochemStore.get(otherId);
             const theirStr = otherGenome.aggression * 0.4 + otherGenome.bodyScale * 0.3 + (otherBiochem2?.chemicals[ChemId.Energy] ?? 0.5) * 0.3;
 
-            social.speechEmoji = pick(SOCIAL_SPEECH.boast);
-            social.speechTimer = 30;
-            otherSocial.speechEmoji = myStr > theirStr ? pick(EMOTIONS.fear) : pick(SOCIAL_SPEECH.boast);
-            otherSocial.speechTimer = 30;
+            if (vocab) {
+              social.speechEmoji = learnAndPick(vocab, SOCIAL_SPEECH.boast);
+              social.speechTimer = 30;
+            }
+            const otherVocab3 = VocabularyStore.get(otherId);
+            if (otherVocab3) {
+              otherSocial.speechEmoji = myStr > theirStr
+                ? learnAndPick(otherVocab3, EMOTIONS.fear)
+                : learnAndPick(otherVocab3, SOCIAL_SPEECH.boast);
+              otherSocial.speechTimer = 30;
+            }
 
             if (myStr > theirStr) {
               this.hierarchySystem.recordWin(id);
@@ -249,56 +323,68 @@ export class SocialSystem extends System {
 
           // Social deference — lower rank shows submission to higher rank
           if (myRank < theirRank - 0.2 && Math.random() < 0.01) {
-            social.speechEmoji = pick(SOCIAL_SPEECH.plead);
-            social.speechTimer = 20;
+            if (vocab) {
+              const plead = pickKnown(vocab, SOCIAL_SPEECH.plead);
+              if (plead) {
+                social.speechEmoji = plead;
+                social.speechTimer = 20;
+              }
+            }
             this.talkTimers.set(id, TALK_COOLDOWN);
           }
         }
       }
 
-      // Emotional expression when alone or near others — contextual emojis
-      if (biochem) {
-        // Hunger makes creatures express food needs
+      // Emotional expression when alone or near others — vocab-gated contextual emojis
+      if (biochem && vocab) {
+        // Hunger makes creatures express food needs (learn through experience)
         if (biochem.chemicals[ChemId.Hunger] > 0.6 && Math.random() < 0.02) {
-          social.speechEmoji = pick(NEEDS.hunger);
+          social.speechEmoji = learnAndPick(vocab, NEEDS.hunger);
           social.speechTimer = 40;
           this.talkTimers.set(id, TALK_COOLDOWN);
         }
         // Pain expression
         else if (biochem.chemicals[ChemId.Pain] > 0.5 && Math.random() < 0.015) {
-          social.speechEmoji = pick(EMOTIONS.pain);
+          social.speechEmoji = learnAndPick(vocab, EMOTIONS.pain);
           social.speechTimer = 35;
           this.talkTimers.set(id, TALK_COOLDOWN);
         }
         // Tiredness
         else if (biochem.chemicals[ChemId.Tiredness] > 0.7 && Math.random() < 0.01) {
-          social.speechEmoji = pick(EMOTIONS.tired);
+          social.speechEmoji = learnAndPick(vocab, EMOTIONS.tired);
           social.speechTimer = 30;
           this.talkTimers.set(id, TALK_COOLDOWN);
         }
         // Contentment when well-fed and healthy
         else if (biochem.chemicals[ChemId.Energy] > 0.7 && biochem.chemicals[ChemId.Hunger] < 0.2 && Math.random() < 0.005) {
-          social.speechEmoji = pick(EMOTIONS.bliss);
+          social.speechEmoji = learnAndPick(vocab, EMOTIONS.bliss);
           social.speechTimer = 40;
+          this.talkTimers.set(id, TALK_COOLDOWN);
+        }
+        // Anxiety expression
+        else if (expr && expr.anxiety > 0.4 && Math.random() < 0.015) {
+          // 😡 and 😰 are either innate or learned through experience
+          social.speechEmoji = expr.anxiety > 0.7 ? '😡' : '😨';
+          social.speechTimer = 35;
           this.talkTimers.set(id, TALK_COOLDOWN);
         }
         // Curiosity when exploring
         else if (genome.curiosity > 0.5 && social.activity === Activity.Walking && Math.random() < 0.005) {
-          social.speechEmoji = pick(EMOTIONS.curious);
+          social.speechEmoji = learnAndPick(vocab, EMOTIONS.curious);
           social.speechTimer = 30;
           this.talkTimers.set(id, TALK_COOLDOWN * 2);
         }
       }
 
-      // Seasonal speech: creatures comment on weather
-      if (this.seasonState && Math.random() < 0.003) {
+      // Seasonal speech: creatures comment on weather (learn through experience)
+      if (this.seasonState && vocab && Math.random() < 0.003) {
         const season = this.seasonState.season;
         if (season === Season.Winter) {
-          social.speechEmoji = '🥶';
+          social.speechEmoji = learnAndPick(vocab, NEEDS.cold);
           social.speechTimer = 30;
           this.talkTimers.set(id, TALK_COOLDOWN * 2);
         } else if (season === Season.Summer) {
-          social.speechEmoji = '☀️';
+          social.speechEmoji = learnAndPick(vocab, NEEDS.warmth);
           social.speechTimer = 25;
           this.talkTimers.set(id, TALK_COOLDOWN * 3);
         }
@@ -306,13 +392,16 @@ export class SocialSystem extends System {
 
       // Memory-based hostile warnings: warn friends about remembered hostiles
       const memory = MemoryStore.get(id);
-      if (memory && senses?.creatureVisible && senses.nearestCreatureId >= 0) {
+      if (memory && vocab && senses?.creatureVisible && senses.nearestCreatureId >= 0) {
         for (const mem of memory.entries) {
           if (mem.type === MemoryType.HostileIndividual && mem.entityId === senses.nearestCreatureId && mem.strength > 0.3) {
             if (Math.random() < 0.02) {
-              social.speechEmoji = pick(SOCIAL_SPEECH.warning);
-              social.speechTimer = 35;
-              this.talkTimers.set(id, TALK_COOLDOWN);
+              const warn = pickKnown(vocab, SOCIAL_SPEECH.warning);
+              if (warn) {
+                social.speechEmoji = warn;
+                social.speechTimer = 35;
+                this.talkTimers.set(id, TALK_COOLDOWN);
+              }
             }
             break;
           }
@@ -321,22 +410,27 @@ export class SocialSystem extends System {
         for (const mem of memory.entries) {
           if (mem.type === MemoryType.FriendlyIndividual && mem.entityId === senses.nearestCreatureId && mem.strength > 0.3) {
             if (Math.random() < 0.01) {
-              social.speechEmoji = pick(EMOTIONS.joy);
-              social.speechTimer = 30;
-              this.talkTimers.set(id, TALK_COOLDOWN);
+              const joy = pickKnown(vocab, EMOTIONS.joy);
+              if (joy) {
+                social.speechEmoji = joy;
+                social.speechTimer = 30;
+                this.talkTimers.set(id, TALK_COOLDOWN);
+              }
             }
             break;
           }
         }
       }
 
-      // Activity-based expression
-      if (social.activity === Activity.Gathering && Math.random() < 0.008) {
-        social.speechEmoji = pick(ACTIVITIES.gather);
-        social.speechTimer = 30;
-      } else if (social.activity === Activity.Building && Math.random() < 0.008) {
-        social.speechEmoji = pick(ACTIVITIES.build);
-        social.speechTimer = 30;
+      // Activity-based expression (vocab-gated)
+      if (vocab) {
+        if (social.activity === Activity.Gathering && Math.random() < 0.008) {
+          const g = pickKnown(vocab, ACTIVITIES.gather);
+          if (g) { social.speechEmoji = g; social.speechTimer = 30; }
+        } else if (social.activity === Activity.Building && Math.random() < 0.008) {
+          const b = pickKnown(vocab, ACTIVITIES.build);
+          if (b) { social.speechEmoji = b; social.speechTimer = 30; }
+        }
       }
 
       // Health-based death from combat
@@ -346,15 +440,17 @@ export class SocialSystem extends System {
     }
   }
 
-  /** Choose context-appropriate emoji based on emotional state and situation */
+  /** Choose context-appropriate emoji based on emotional state — vocab-gated */
   private contextualSpeech(
-    id: number,
+    vocab: import('../components/Vocabulary').VocabularyData,
     context: 'friendly' | 'hostile' | 'neutral',
     expr: { happiness: number; fear: number; anger: number; curiosity: number; tiredness: number; pain: number } | undefined,
     biochem: { chemicals: Float32Array } | undefined,
-  ): string {
+  ): string | null {
     if (!expr || !biochem) {
-      return context === 'friendly' ? pick(SOCIAL_SPEECH.greet) : pick(EMOTIONS.anger);
+      return context === 'friendly'
+        ? pickKnown(vocab, SOCIAL_SPEECH.greet)
+        : pickKnown(vocab, EMOTIONS.anger);
     }
 
     const hunger = biochem.chemicals[ChemId.Hunger];
@@ -363,23 +459,29 @@ export class SocialSystem extends System {
       // Dominant emotion drives speech
       if (expr.happiness > 0.5) {
         const r = Math.random();
-        if (r < 0.3) return pick(EMOTIONS.joy);
-        if (r < 0.5) return pick(SOCIAL_SPEECH.joke);
-        if (r < 0.7) return pick(SOCIAL_SPEECH.gossip);
-        return pick(SOCIAL_SPEECH.greet);
+        if (r < 0.3) return pickKnown(vocab, EMOTIONS.joy);
+        if (r < 0.5) return pickKnown(vocab, SOCIAL_SPEECH.joke);
+        if (r < 0.7) return pickKnown(vocab, SOCIAL_SPEECH.gossip);
+        return pickKnown(vocab, SOCIAL_SPEECH.greet);
       }
-      if (hunger > 0.5) return pick(NEEDS.hunger);
-      if (expr.fear > 0.3) return pick(SOCIAL_SPEECH.warning);
+      if (hunger > 0.5) return pickKnown(vocab, NEEDS.hunger);
+      if (expr.fear > 0.3) return pickKnown(vocab, SOCIAL_SPEECH.warning);
       if (expr.curiosity > 0.4) {
-        return Math.random() < 0.5 ? pick(SOCIAL_SPEECH.story) : pick(EMOTIONS.curious);
+        return Math.random() < 0.5
+          ? pickKnown(vocab, SOCIAL_SPEECH.story)
+          : pickKnown(vocab, EMOTIONS.curious);
       }
-      if (expr.tiredness > 0.5) return pick(EMOTIONS.tired);
-      return pick(SOCIAL_SPEECH.greet);
+      if (expr.tiredness > 0.5) return pickKnown(vocab, EMOTIONS.tired);
+      return pickKnown(vocab, SOCIAL_SPEECH.greet);
     }
 
-    return emotionEmoji(
-      expr.happiness, expr.fear, expr.anger,
-      expr.curiosity, expr.tiredness, expr.pain, hunger
-    );
+    // Hostile/neutral: pick from known emotion emojis
+    const pools = [EMOTIONS.joy, EMOTIONS.fear, EMOTIONS.anger, EMOTIONS.curious, EMOTIONS.tired, EMOTIONS.pain];
+    const vals = [expr.happiness, expr.fear, expr.anger, expr.curiosity, expr.tiredness, expr.pain];
+    let bestIdx = 0;
+    for (let i = 1; i < vals.length; i++) {
+      if (vals[i] > vals[bestIdx]) bestIdx = i;
+    }
+    return pickKnown(vocab, pools[bestIdx]);
   }
 }

@@ -16,6 +16,7 @@ import {
   EMOTIONS, ACTIVITIES, SYMBOLS, SOCIAL_SPEECH,
   type PhilosophyArchetype,
 } from '../world/EmojiVocabulary';
+import { VocabularyStore, learn, learnAndPick } from '../components/Vocabulary';
 
 const TALK_RANGE_SQ = 4 * 4;
 const PHILOSOPHY_UPDATE_INTERVAL = 500; // re-evaluate faction philosophy periodically
@@ -111,9 +112,12 @@ export class ReligionSystem extends System {
               }
             }
 
-            // Proselytizing speech
-            social.speechEmoji = pick(ACTIVITIES.worship);
-            social.speechTimer = 40;
+            // Proselytizing speech (learn through religious practice)
+            const rVocab = VocabularyStore.get(id);
+            if (rVocab) {
+              social.speechEmoji = learnAndPick(rVocab, ACTIVITIES.worship);
+              social.speechTimer = 40;
+            }
 
             // Record bond for clan formation
             this.factionManager?.recordInteraction(id, otherId, true);
@@ -313,8 +317,11 @@ export class ReligionSystem extends System {
             const social = SocialStore.get(mid);
             if (social) {
               social.factionId = newFaction.id;
-              social.speechEmoji = pick(SYMBOLS.freedom);
-              social.speechTimer = 60;
+              const dVocab = VocabularyStore.get(mid);
+              if (dVocab) {
+                social.speechEmoji = learnAndPick(dVocab, SYMBOLS.freedom);
+                social.speechTimer = 60;
+              }
             }
           }
 

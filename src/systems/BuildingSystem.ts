@@ -15,9 +15,21 @@ import { distSq, randFloat, clamp } from '../utils/Math';
 import type { ResourceGrid } from '../world/ResourceGrid';
 import { terrainY } from '../world/Environment';
 import type { VoxelRenderer } from '../buildings/VoxelRenderer';
+import type { ConstructionSystem } from './ConstructionSystem';
+import type { VoxelWorld } from '../voxel/VoxelWorld';
+import {
+  createHutBlueprint, createWatchtowerBlueprint, createFarmPlotBlueprint,
+  createShrineBlueprint, createWallSegmentBlueprint, createStoragePitBlueprint,
+  mutateBlueprint,
+  type ConstructionSite,
+} from '../voxel/Blueprint';
+import { ExpressionStore } from '../components/Expression';
+import { ZealotryStore } from '../components/Zealotry';
+import { VocabularyStore, learn } from '../components/Vocabulary';
 
 const BUILD_RANGE_SQ = 3 * 3;
 const BUILD_COOLDOWN = 300;
+let nextSiteId = 1;
 
 export class BuildingSystem extends System {
   readonly query = SocialStore.bit | GenomeStore.bit | TransformStore.bit;
@@ -26,6 +38,8 @@ export class BuildingSystem extends System {
   scene: THREE.Scene | null = null;
   grid: ResourceGrid | null = null;
   voxelRenderer: VoxelRenderer | null = null;
+  constructionSystem: ConstructionSystem | null = null;
+  voxelWorld: VoxelWorld | null = null;
   private buildTimers = new Map<number, number>();
 
   update(world: World, _dt: number): void {
@@ -166,9 +180,19 @@ export class BuildingSystem extends System {
       }
 
       this.placeBuilding(world, type, ct.x + randFloat(-1, 1), ct.z + randFloat(-1, 1), social.factionId);
+
+      // Also create a voxel construction site if we have the systems wired
+      if (this.constructionSystem && this.voxelWorld) {
+        this.spawnConstructionSite(cid, ct, type);
+      }
+
       social.activity = Activity.Building;
-      social.speechEmoji = '🔨';
-      social.speechTimer = 40;
+      const bVocab = VocabularyStore.get(cid);
+      if (bVocab) {
+        learn(bVocab, '🔨');
+        social.speechEmoji = '🔨';
+        social.speechTimer = 40;
+      }
       this.buildTimers.set(cid, BUILD_COOLDOWN);
 
       biochem.chemicals[ChemId.Reward] = clamp(biochem.chemicals[ChemId.Reward] + 0.2, 0, 1);
@@ -178,6 +202,57 @@ export class BuildingSystem extends System {
     if (this.voxelRenderer) {
       this.voxelRenderer.rebuild();
     }
+  }
+
+  /** Spawn a voxel construction site near the creature based on need */
+  private spawnConstructionSite(
+    creatureId: number,
+    transform: { x: number; z: number },
+    buildingType: BuildingType,
+  ): void {
+    if (!this.voxelWorld || !this.constructionSystem) return;
+
+    // Choose blueprint based on building type
+    let bp;
+    const expr = ExpressionStore.get(creatureId);
+    const zealotry = ZealotryStore.get(creatureId);
+    const anxiety = expr?.anxiety ?? 0;
+
+    switch (buildingType) {
+      case BuildingType.Shelter: bp = createHutBlueprint(); break;
+      case BuildingType.Wall: bp = createWallSegmentBlueprint(); break;
+      case BuildingType.Tower: bp = createWatchtowerBlueprint(); break;
+      case BuildingType.Farm: bp = createFarmPlotBlueprint(); break;
+      case BuildingType.Monument:
+        bp = (zealotry && zealotry.zealotry > 0.5) ? createShrineBlueprint() : createStoragePitBlueprint();
+        break;
+      case BuildingType.Granary: bp = createStoragePitBlueprint(); break;
+      default: bp = createHutBlueprint(); break;
+    }
+
+    // Apply evolutionary mutation from genome
+    const genome = GenomeStore.get(creatureId)?.genome;
+    if (genome) {
+      bp = mutateBlueprint(bp, genome.buildingMutationRate, genome.buildingMaterialPref);
+    }
+
+    // Find placement position
+    const [bx, , bz] = this.voxelWorld.worldToBlock(transform.x + randFloat(-2, 2), 0, transform.z + randFloat(-2, 2));
+    const surfY = this.voxelWorld.getHeight(bx, bz);
+
+    const site: ConstructionSite = {
+      id: nextSiteId++,
+      blueprint: bp,
+      originX: bx - Math.floor(bp.width / 2),
+      originY: surfY,
+      originZ: bz - Math.floor(bp.depth / 2),
+      placed: new Uint8Array(bp.width * bp.height * bp.depth),
+      placedCount: 0,
+      progress: 0,
+      active: true,
+    };
+
+    this.constructionSystem.sites.push(site);
   }
 
   private chooseBuildingType(genome: any, chemicals: Float32Array, inv: any): BuildingType | null {

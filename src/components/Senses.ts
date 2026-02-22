@@ -48,6 +48,13 @@ export interface SensesData {
   preyVisible: boolean;
   nearestPreyIndex: number;
 
+  // Monster sensing
+  monsterVisible: boolean;
+  nearestMonsterDist: number;  // 0-1 normalized
+  nearestMonsterAngle: number; // -1 to 1
+  nearestMonsterIndex: number; // index in MonsterManager arrays
+  nearestMonsterType: number;
+
   // Crowd sensing
   crowdDensity: number;        // 0-1, capped at 8 neighbors within 12 units
   nearbyFactionCount: number;  // same-faction creatures within 12 units
@@ -93,6 +100,12 @@ export function createSenses(): SensesData {
     nearestPreyType: -1,
     preyVisible: false,
     nearestPreyIndex: -1,
+
+    monsterVisible: false,
+    nearestMonsterDist: 1,
+    nearestMonsterAngle: 0,
+    nearestMonsterIndex: -1,
+    nearestMonsterType: -1,
 
     crowdDensity: 0,
     nearbyFactionCount: 0,

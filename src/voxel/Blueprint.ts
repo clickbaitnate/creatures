@@ -231,3 +231,53 @@ export const SMALL_BLUEPRINTS = [
   createStoragePitBlueprint,
   createFarmPlotBlueprint,
 ];
+
+/** Mutate a blueprint based on genome traits. Small chance per block to add/remove/swap. */
+export function mutateBlueprint(bp: Blueprint, mutationRate: number, materialPref: number): Blueprint {
+  if (mutationRate <= 0) return bp;
+
+  const newBlocks = new Uint8Array(bp.blocks);
+  let total = bp.totalBlocks;
+
+  // Material preference: 0 = wood-heavy, 1 = stone-heavy
+  const woodBlocks = [Block.Wood, Block.Plank, Block.Thatch];
+  const stoneBlocks = [Block.Cobblestone, Block.StoneBrick, Block.Stone];
+
+  for (let i = 0; i < newBlocks.length; i++) {
+    if (Math.random() > mutationRate) continue;
+    const block = newBlocks[i] as Block;
+
+    if (block === Block.Air) {
+      // Small chance to add a block (extension)
+      if (Math.random() < 0.1) {
+        newBlocks[i] = materialPref > 0.5
+          ? stoneBlocks[Math.floor(Math.random() * stoneBlocks.length)]
+          : woodBlocks[Math.floor(Math.random() * woodBlocks.length)];
+        total++;
+      }
+    } else {
+      const r = Math.random();
+      if (r < 0.15) {
+        // Remove block
+        newBlocks[i] = Block.Air;
+        total--;
+      } else if (r < 0.5) {
+        // Swap material based on preference
+        if (materialPref > 0.5 && woodBlocks.includes(block)) {
+          newBlocks[i] = stoneBlocks[Math.floor(Math.random() * stoneBlocks.length)];
+        } else if (materialPref <= 0.5 && stoneBlocks.includes(block)) {
+          newBlocks[i] = woodBlocks[Math.floor(Math.random() * woodBlocks.length)];
+        }
+      }
+    }
+  }
+
+  return {
+    name: bp.name + '*',
+    width: bp.width,
+    height: bp.height,
+    depth: bp.depth,
+    blocks: newBlocks,
+    totalBlocks: Math.max(1, total),
+  };
+}

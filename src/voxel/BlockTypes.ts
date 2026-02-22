@@ -31,9 +31,14 @@ export const enum Block {
   CraftingTable = 25,
   Furnace = 26,
   Sapling = 27,
+  DarkGrass = 28,    // swamp biome
+  DeadGrass = 29,    // dry/tundra border
+  Cactus = 30,       // desert
+  RedSand = 31,      // mesa/desert variant
+  PackedIce = 32,    // tundra
 }
 
-export const BLOCK_COUNT = 28;
+export const BLOCK_COUNT = 33;
 
 export interface BlockProps {
   color: number;       // RGB hex
@@ -75,6 +80,11 @@ export const BLOCK_PROPS: BlockProps[] = [
   /* CraftingTable*/ { color: 0xB5651D, solid: true,  transparent: false, mineable: true,  mineYield: null,              mineTicks: 20, emissive: false },
   /* Furnace      */ { color: 0x696969, solid: true,  transparent: false, mineable: true,  mineYield: null,              mineTicks: 30, emissive: true  },
   /* Sapling      */ { color: 0x66AA44, solid: false, transparent: true,  mineable: true,  mineYield: null,              mineTicks: 2,  emissive: false },
+  /* DarkGrass    */ { color: 0x2D5E2D, solid: true,  transparent: false, mineable: true,  mineYield: ItemType.RawGrass, mineTicks: 15, emissive: false },
+  /* DeadGrass    */ { color: 0xA89860, solid: true,  transparent: false, mineable: true,  mineYield: ItemType.RawGrass, mineTicks: 12, emissive: false },
+  /* Cactus       */ { color: 0x2D8B2D, solid: true,  transparent: false, mineable: true,  mineYield: ItemType.RawWood,  mineTicks: 15, emissive: false },
+  /* RedSand      */ { color: 0xC2784E, solid: true,  transparent: false, mineable: true,  mineYield: null,              mineTicks: 10, emissive: false },
+  /* PackedIce    */ { color: 0xA0D0F0, solid: true,  transparent: true,  mineable: true,  mineYield: null,              mineTicks: 25, emissive: false },
 ];
 
 /** Map from ItemType to the Block it places during construction */
@@ -85,6 +95,7 @@ export const ITEM_TO_BLOCK: Partial<Record<ItemType, Block>> = {
   [ItemType.Plank]:      Block.Plank,
   [ItemType.RawOre]:     Block.OreBlock,
   [ItemType.RawGrass]:   Block.Thatch,
+  [ItemType.CraftingTableItem]: Block.CraftingTable,
 };
 
 /** Map from Block to the ItemType needed to place it during construction */

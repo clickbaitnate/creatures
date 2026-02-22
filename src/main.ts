@@ -10,7 +10,7 @@ import { SensesStore, createSenses } from './components/Senses';
 import { LifecycleStore, createLifecycle, LifeStage } from './components/Lifecycle';
 import { SocialStore, createSocial, Activity } from './components/Social';
 import { EggStore } from './components/Egg';
-import { BuildingStore, BUILDING_NAMES } from './components/Building';
+import { BuildingStore } from './components/Building';
 import { FoodStore, FoodType, SensorySystem } from './systems/SensorySystem';
 import { BrainSystem } from './systems/BrainSystem';
 import { InstinctSystem } from './systems/InstinctSystem';
@@ -22,11 +22,10 @@ import { SocialSystem } from './systems/SocialSystem';
 import { ReproductionSystem } from './systems/ReproductionSystem';
 import { BuildingSystem } from './systems/BuildingSystem';
 import { RenderSystem } from './systems/RenderSystem';
-import { createDefaultGenome, genomeToBrain, getBreedLabel, type CreatureGenome } from './genome/Genome';
+import { createDefaultGenome, genomeToBrain, type CreatureGenome } from './genome/Genome';
 import { buildCreatureMesh } from './creatures/MeshBuilder';
 import { ShaderStateStore } from './components/ShaderState';
 import { MatingStore, createMating } from './components/Mating';
-import { Sex } from './genome/Genome';
 import { ShaderSystem } from './systems/ShaderSystem';
 import { ExpressionStore, createExpression } from './components/Expression';
 import { ExpressionSystem } from './systems/ExpressionSystem';
@@ -37,37 +36,42 @@ import { creatureName } from './world/NameGenerator';
 import { SpeechBubbleManager } from './ui/SpeechBubbles';
 import { ChemId } from './biochemistry/ChemicalRegistry';
 import { randFloat } from './utils/Math';
-import { createSeasonState, updateSeason, SEASON_NAMES } from './world/Seasons';
-import { MemoryStore, createMemory, MemoryType, MEMORY_SLOTS } from './components/Memory';
+import { createSeasonState, updateSeason } from './world/Seasons';
+import { createDayNight, updateDayNight } from './world/DayNightCycle';
+import { MonsterManager, MAX_MONSTERS } from './world/MonsterManager';
+import { MonsterRenderer } from './world/MonsterRenderer';
+import { MemoryStore, createMemory } from './components/Memory';
 import { MemorySystem } from './systems/MemorySystem';
-import { InventoryStore, createInventory, addItem, ITEM_NAMES, ItemType } from './components/Inventory';
+import { InventoryStore, createInventory, addItem, ItemType, getBestWeapon } from './components/Inventory';
 import { GatheringSystem } from './systems/GatheringSystem';
 import { CraftingSystem } from './systems/CraftingSystem';
+import { VocabularyStore, createVocabulary, learn as learnEmoji } from './components/Vocabulary';
 import { CritterManager } from './world/PreyCritters';
 import { CritterRenderer } from './world/CritterRenderer';
 import { HuntingSystem } from './systems/HuntingSystem';
 import { TerritorySystem } from './world/TerritorySystem';
 import { BorderRenderer } from './world/BorderRenderer';
-import { PoliticsSystem, GOVERNMENT_NAMES } from './world/PoliticsSystem';
+import { PoliticsSystem } from './world/PoliticsSystem';
 import { AnimationSystem } from './systems/AnimationSystem';
 import { GoalStore, createGoal } from './components/Goal';
 import { GoalSystem } from './systems/GoalSystem';
 import { ZealotryStore, createZealotry } from './components/Zealotry';
 import { GodMode } from './ui/GodMode';
 import { ReligionSystem } from './systems/ReligionSystem';
-import { SephirothSystem, SEPHIRAH_NAMES } from './world/Sephiroth';
+import { SephirothSystem } from './world/Sephiroth';
 import { ZodiacCycle } from './world/Zodiac';
 import { MarketSystem } from './systems/MarketSystem';
 import { ChartPanel } from './ui/Charts';
 import { DataLogger } from './data/DataLogger';
 import { Dashboard } from './ui/Dashboard';
+import { GameUI } from './ui/GameUI';
 
 // Voxel world imports
 import { VoxelWorld, WORLD_HALF as VOXEL_WORLD_HALF } from './voxel/VoxelWorld';
 import { VoxelRenderer } from './voxel/VoxelRenderer';
 import { ConstructionSystem } from './systems/ConstructionSystem';
-import { createBabelBlueprint, type ConstructionSite } from './voxel/Blueprint';
 import { Block } from './voxel/BlockTypes';
+import { WaterFlow } from './voxel/WaterFlow';
 
 // ── Three.js Scene ──────────────────────────────────────────
 
@@ -107,74 +111,10 @@ voxelWorld.generate();
 console.log('Voxel world generated.');
 
 const voxelRenderer = new VoxelRenderer(voxelWorld, scene);
+const waterFlow = new WaterFlow(voxelWorld);
 console.log('Building chunk meshes...');
 voxelRenderer.buildAll();
 console.log('Chunk meshes built.');
-
-// ── Tower of Babel ───────────────────────────────────────────
-
-const babelBlueprint = createBabelBlueprint();
-
-// Place tower at world center
-const towerCenterBX = Math.floor(voxelWorld.worldToBlock(0, 0, 0)[0]);
-const towerCenterBZ = Math.floor(voxelWorld.worldToBlock(0, 0, 0)[2]);
-const towerOriginX = towerCenterBX - Math.floor(babelBlueprint.width / 2);
-const towerOriginZ = towerCenterBZ - Math.floor(babelBlueprint.depth / 2);
-
-// Find ground level at tower center
-const towerGroundY = voxelWorld.getHeight(towerCenterBX, towerCenterBZ);
-
-// Clear terrain where tower will be (flatten)
-for (let bx = towerOriginX - 2; bx < towerOriginX + babelBlueprint.width + 2; bx++) {
-  for (let bz = towerOriginZ - 2; bz < towerOriginZ + babelBlueprint.depth + 2; bz++) {
-    // Fill up to tower ground level, clear above
-    for (let by = 0; by < towerGroundY; by++) {
-      if (voxelWorld.getBlock(bx, by, bz) === Block.Air) {
-        voxelWorld.setBlock(bx, by, bz, Block.Stone);
-      }
-    }
-    for (let by = towerGroundY; by < towerGroundY + babelBlueprint.height + 5; by++) {
-      voxelWorld.setBlock(bx, by, bz, Block.Air);
-    }
-  }
-}
-
-const babelSite: ConstructionSite = {
-  id: 0,
-  blueprint: babelBlueprint,
-  originX: towerOriginX,
-  originY: towerGroundY,
-  originZ: towerOriginZ,
-  placed: new Uint8Array(babelBlueprint.width * babelBlueprint.height * babelBlueprint.depth),
-  placedCount: 0,
-  progress: 0,
-  active: true,
-};
-
-// Pre-place first 2 layers of the tower (visually started)
-const preplaceLayers = 2;
-for (let y = 0; y < preplaceLayers; y++) {
-  for (let z = 0; z < babelBlueprint.depth; z++) {
-    for (let x = 0; x < babelBlueprint.width; x++) {
-      const idx = (y * babelBlueprint.depth + z) * babelBlueprint.width + x;
-      const block = babelBlueprint.blocks[idx] as Block;
-      if (block !== Block.Air) {
-        voxelWorld.setBlock(
-          towerOriginX + x,
-          towerGroundY + y,
-          towerOriginZ + z,
-          block,
-        );
-        babelSite.placed[idx] = 1;
-        babelSite.placedCount++;
-      }
-    }
-  }
-}
-babelSite.progress = babelSite.placedCount / babelBlueprint.totalBlocks;
-
-// Rebuild dirty chunks after tower placement
-voxelRenderer.buildAll();
 
 // ── Critters ──────────────────────────────────────────────────
 
@@ -182,9 +122,13 @@ const critterManager = new CritterManager();
 critterManager.init();
 const critterRenderer = new CritterRenderer(scene);
 
+const monsterManager = new MonsterManager();
+const monsterRenderer = new MonsterRenderer(scene);
+
 // ── Global Managers ─────────────────────────────────────────
 
 const seasonState = createSeasonState();
+const dayNight = createDayNight();
 const factionManager = new FactionManager();
 
 const territorySystem = new TerritorySystem();
@@ -242,6 +186,7 @@ world.registerStorage(InventoryStore as any);
 world.registerStorage(GoalStore as any);
 world.registerStorage(ZealotryStore as any);
 world.registerStorage(MemoryStore as any);
+world.registerStorage(VocabularyStore as any);
 
 const hierarchySystem = new HierarchySystem();
 hierarchySystem.factionManager = factionManager;
@@ -260,11 +205,13 @@ buildingSystem.scene = scene;
 
 const gatheringSystem = new GatheringSystem();
 gatheringSystem.voxelWorld = voxelWorld;
+gatheringSystem.waterFlow = waterFlow;
 
 const sensorySystem = new SensorySystem();
 sensorySystem.voxelWorld = voxelWorld;
 sensorySystem.factionManager = factionManager;
 sensorySystem.critterManager = critterManager;
+sensorySystem.monsterManager = monsterManager;
 
 const brainSystem = new BrainSystem();
 brainSystem.seasonState = seasonState;
@@ -272,6 +219,9 @@ brainSystem.voxelWorld = voxelWorld;
 
 const instinctSystem = new InstinctSystem();
 instinctSystem.seasonState = seasonState;
+instinctSystem.monsterManager = monsterManager;
+instinctSystem.dayNight = dayNight;
+instinctSystem.voxelWorld = voxelWorld;
 
 const biochemistrySystem = new BiochemistrySystem();
 biochemistrySystem.seasonState = seasonState;
@@ -281,8 +231,8 @@ motorSystem.voxelWorld = voxelWorld;
 
 const constructionSystem = new ConstructionSystem();
 constructionSystem.voxelWorld = voxelWorld;
-constructionSystem.sites.push(babelSite);
-constructionSystem.babelSiteId = babelSite.id;
+buildingSystem.constructionSystem = constructionSystem;
+buildingSystem.voxelWorld = voxelWorld;
 
 const huntingSystem = new HuntingSystem();
 huntingSystem.critterManager = critterManager;
@@ -306,7 +256,9 @@ world.addSystem(new EatingSystem());         // 55
 world.addSystem(gatheringSystem);            // 57
 world.addSystem(huntingSystem);              // 58
 world.addSystem(reproSystem);                // 60
-world.addSystem(new CraftingSystem());        // 63
+const craftingSystem = new CraftingSystem();
+craftingSystem.voxelWorld = voxelWorld;
+world.addSystem(craftingSystem);               // 63
 world.addSystem(constructionSystem);         // 64
 world.addSystem(buildingSystem);             // 65
 world.addSystem(new ShaderSystem());         // 95
@@ -325,6 +277,22 @@ function spawnCreature(genome: CreatureGenome, x: number, z: number): number {
   mesh.userData.entityId = id;
   scene.add(mesh);
 
+  // Ensure spawn is not in water — spiral outward to find dry land
+  if (voxelWorld.isWaterAt(x, z)) {
+    let found = false;
+    for (let r = 1; r <= 20 && !found; r++) {
+      for (let a = 0; a < 8 && !found; a++) {
+        const nx = x + Math.cos(a * Math.PI / 4) * r;
+        const nz = z + Math.sin(a * Math.PI / 4) * r;
+        if (!voxelWorld.isWaterAt(nx, nz)) {
+          x = nx;
+          z = nz;
+          found = true;
+        }
+      }
+    }
+  }
+
   const y = voxelWorld.getHeightWorld(x, z);
   world.addComponent(id, TransformStore, { x, y, z, rotation: randFloat(0, Math.PI * 2) });
   world.addComponent(id, RenderableStore, { object: mesh });
@@ -341,6 +309,7 @@ function spawnCreature(genome: CreatureGenome, x: number, z: number): number {
   world.addComponent(id, GoalStore, createGoal());
   world.addComponent(id, ZealotryStore, createZealotry());
   world.addComponent(id, MemoryStore, createMemory());
+  world.addComponent(id, VocabularyStore, createVocabulary());
 
   // Faction assignment
   const faction = factionManager.assignFaction(id, genome);
@@ -359,22 +328,82 @@ reproSystem.onSpawn = (genome, x, z) => {
 };
 
 
-// ── Selection & Camera ──────────────────────────────────────
+// ── Selection & RTS Camera ──────────────────────────────────
 
 let selectedId = -1;
+let selectedCreatureIndex = -1; // index into alive array for quick-nav
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
-let cameraTheta = 0;
-let cameraPhi = Math.PI / 4;
-let cameraDist = 50;
-const cameraTarget = new THREE.Vector3(0, 0, 0);
+
+// RTS camera: top-down isometric-ish, pan with WASD/right-drag/edge-scroll, zoom with scroll
+const camTarget = new THREE.Vector3(0, 0, 0); // point camera looks at on ground
+let camZoom = 50;      // distance from target
+let camAngle = 0;      // orbit angle around Y axis
+const CAM_PITCH = Math.PI / 4; // fixed 45-degree downward angle
+const CAM_PAN_SPEED = 30;
+const CAM_FAST_MULT = 3;
+const EDGE_SCROLL_MARGIN = 30; // pixels from screen edge
 let isDragging = false;
 let lastMouseX = 0;
 let lastMouseY = 0;
+let mouseScreenX = 0;
+let mouseScreenY = 0;
+const keysDown = new Set<string>();
 
-// God mode: P to possess/release selected creature
-// E: Export data JSON
+// Creature quick-nav list
+function getAliveCreatureIds(): number[] {
+  return world.query(LifecycleStore.bit | TransformStore.bit)
+    .filter(id => {
+      const lc = LifecycleStore.get(id);
+      return lc && lc.stage === LifeStage.Alive;
+    });
+}
+
+function jumpToCreature(id: number): void {
+  const t = TransformStore.get(id);
+  if (t) {
+    camTarget.set(t.x, 0, t.z);
+    selectedId = id;
+    gameUI.update();
+  }
+}
+
+function cycleCreature(dir: number): void {
+  const alive = getAliveCreatureIds();
+  if (alive.length === 0) return;
+  if (selectedId >= 0) {
+    const curIdx = alive.indexOf(selectedId);
+    if (curIdx >= 0) {
+      selectedCreatureIndex = (curIdx + dir + alive.length) % alive.length;
+    } else {
+      selectedCreatureIndex = 0;
+    }
+  } else {
+    selectedCreatureIndex = 0;
+  }
+  jumpToCreature(alive[selectedCreatureIndex]);
+}
+
+// Key tracking
 window.addEventListener('keydown', (e) => {
+  keysDown.add(e.key.toLowerCase());
+
+  // Creature cycling: [ and ] or < and >
+  if (e.key === '[' || e.key === ',') cycleCreature(-1);
+  if (e.key === ']' || e.key === '.') cycleCreature(1);
+
+  // F: follow selected creature (snap camera to it)
+  if ((e.key === 'f' || e.key === 'F') && selectedId >= 0) {
+    jumpToCreature(selectedId);
+  }
+
+  // Escape: deselect
+  if (e.key === 'Escape') {
+    selectedId = -1;
+    gameUI.update();
+  }
+
+  // P: possess
   if (e.key === 'p' || e.key === 'P') {
     if (godMode.active) {
       godMode.release();
@@ -382,11 +411,35 @@ window.addEventListener('keydown', (e) => {
       godMode.possess(selectedId, world);
     }
   }
-  if (e.key === 'e' || e.key === 'E') {
-    dataLogger.downloadJSON();
+
+  // Q/E: rotate camera
+  if (e.key === 'q' || e.key === 'Q') camAngle -= 0.1;
+  if (e.key === 'e' || e.key === 'E') camAngle += 0.1;
+});
+window.addEventListener('keyup', (e) => {
+  keysDown.delete(e.key.toLowerCase());
+});
+
+// Track mouse position for edge scrolling
+window.addEventListener('mousemove', (e) => {
+  mouseScreenX = e.clientX;
+  mouseScreenY = e.clientY;
+
+  if (isDragging) {
+    const dx = e.clientX - lastMouseX;
+    const dy = e.clientY - lastMouseY;
+    // Pan camera based on drag (scaled by zoom)
+    const panScale = camZoom * 0.003;
+    const cosA = Math.cos(camAngle);
+    const sinA = Math.sin(camAngle);
+    camTarget.x -= (dx * cosA + dy * sinA) * panScale;
+    camTarget.z -= (-dx * sinA + dy * cosA) * panScale;
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
   }
 });
 
+// Left-click: creature selection
 renderer.domElement.addEventListener('mousedown', (e) => {
   if (e.button === 0) {
     mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
@@ -407,50 +460,62 @@ renderer.domElement.addEventListener('mousedown', (e) => {
     } else {
       selectedId = -1;
     }
-    updateHUD();
+    gameUI.update();
   }
-  if (e.button === 2 || e.button === 1) {
+  // Right-click: start dragging to pan
+  if (e.button === 2) {
     isDragging = true;
     lastMouseX = e.clientX;
     lastMouseY = e.clientY;
   }
 });
-renderer.domElement.addEventListener('mousemove', (e) => {
-  if (!isDragging) return;
-  cameraTheta -= (e.clientX - lastMouseX) * 0.005;
-  cameraPhi = Math.max(0.1, Math.min(Math.PI / 2 - 0.05, cameraPhi - (e.clientY - lastMouseY) * 0.005));
-  lastMouseX = e.clientX;
-  lastMouseY = e.clientY;
+renderer.domElement.addEventListener('mouseup', (e) => {
+  if (e.button === 2) isDragging = false;
 });
-renderer.domElement.addEventListener('mouseup', () => { isDragging = false; });
 renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 renderer.domElement.addEventListener('wheel', (e) => {
-  cameraDist = Math.max(5, Math.min(250, cameraDist + e.deltaY * 0.05));
+  camZoom = Math.max(10, Math.min(200, camZoom + e.deltaY * 0.08));
 });
 
 function updateCamera(): void {
-  if (selectedId >= 0 && world.has(selectedId)) {
+  const dt = 1 / 60;
+  const speed = keysDown.has('shift') ? CAM_PAN_SPEED * CAM_FAST_MULT : CAM_PAN_SPEED;
+
+  // WASD pan on XZ plane (relative to camera angle)
+  let mx = 0, mz = 0;
+  if (keysDown.has('w') || keysDown.has('arrowup')) mz -= 1;
+  if (keysDown.has('s') || keysDown.has('arrowdown')) mz += 1;
+  if (keysDown.has('a') || keysDown.has('arrowleft')) mx -= 1;
+  if (keysDown.has('d') || keysDown.has('arrowright')) mx += 1;
+
+  // Edge scrolling
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  if (mouseScreenX < EDGE_SCROLL_MARGIN) mx -= 1;
+  if (mouseScreenX > w - EDGE_SCROLL_MARGIN) mx += 1;
+  if (mouseScreenY < EDGE_SCROLL_MARGIN) mz -= 1;
+  if (mouseScreenY > h - EDGE_SCROLL_MARGIN) mz += 1;
+
+  // Rotate movement by camera angle
+  const cosA = Math.cos(camAngle);
+  const sinA = Math.sin(camAngle);
+  camTarget.x += (mx * cosA - mz * sinA) * speed * dt;
+  camTarget.z += (mx * sinA + mz * cosA) * speed * dt;
+
+  // Smoothly follow selected creature
+  if (selectedId >= 0 && world.has(selectedId) && keysDown.has('f')) {
     const t = TransformStore.get(selectedId);
-    if (t) cameraTarget.lerp(new THREE.Vector3(t.x, t.y + 2, t.z), 0.05);
+    if (t) camTarget.lerp(new THREE.Vector3(t.x, 0, t.z), 0.1);
   }
+
+  // Position camera: orbit at camAngle, looking down at camPitch
   camera.position.set(
-    cameraTarget.x + cameraDist * Math.sin(cameraPhi) * Math.sin(cameraTheta),
-    cameraTarget.y + cameraDist * Math.cos(cameraPhi),
-    cameraTarget.z + cameraDist * Math.sin(cameraPhi) * Math.cos(cameraTheta),
+    camTarget.x + camZoom * Math.sin(CAM_PITCH) * Math.sin(camAngle),
+    camZoom * Math.cos(CAM_PITCH),
+    camTarget.z + camZoom * Math.sin(CAM_PITCH) * Math.cos(camAngle),
   );
-  camera.lookAt(cameraTarget);
+  camera.lookAt(camTarget.x, 0, camTarget.z);
 }
-
-// ── HUD ─────────────────────────────────────────────────────
-
-const hud = document.createElement('div');
-hud.style.cssText = `
-  position:fixed; top:10px; left:10px; color:#fff; font:12px monospace;
-  background:rgba(0,0,0,0.7); padding:10px 14px; border-radius:8px;
-  pointer-events:none; line-height:1.5; min-width:260px; white-space:pre;
-  max-height:90vh; overflow-y:auto;
-`;
-document.body.appendChild(hud);
 
 // Add CSS animation for speech bubbles
 const style = document.createElement('style');
@@ -462,109 +527,6 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-function updateHUD(): void {
-  const creatureIds = world.query(LifecycleStore.bit | TransformStore.bit);
-  const alive = creatureIds.filter(id => {
-    const lc = LifecycleStore.get(id);
-    return lc && lc.stage === LifeStage.Alive;
-  });
-  const eggCount = world.query(EggStore.bit).length;
-  const buildingCount = world.query(BuildingStore.bit).length;
-  const activeFactions = factionManager.activeFactions;
-
-  // Tower progress
-  const towerPct = (babelSite.progress * 100).toFixed(1);
-
-  let text = `Pop: ${alive.length}  Eggs: ${eggCount}  Gen: ${generation}  ${SEASON_NAMES[seasonState.season]}  ${zodiac.currentSignName}`;
-  text += `\nTower of Babel: ${towerPct}%  ${babelSite.active ? '🏗️' : constructionSystem.exodusTriggered ? '💨 SCATTERED' : '✅'}`;
-  text += `\n\n── Factions ──`;
-
-  for (const f of activeFactions) {
-    const cultureIcon = f.breedingNorm === 'conservative' ? '💍' : f.breedingNorm === 'scandalous' ? '💃' : '';
-    const nation = politicsSystem.getNation(f.id);
-    const govName = nation ? GOVERNMENT_NAMES[nation.government] : '';
-    const terrCount = nation ? nation.territory : 0;
-    const philName = f.philosophy ? ` [${f.philosophy}]` : '';
-    const doctrine = f.doctrine?.length > 0 ? ' ' + f.doctrine.join('') : '';
-    text += `\n${f.emoji} ${f.name} (${f.memberIds.size}) ${govName} T:${terrCount}${philName}${doctrine} ${cultureIcon}`;
-    // Show relations
-    for (const f2 of activeFactions) {
-      if (f.id === f2.id) continue;
-      const rel = f.relations.get(f2.id) ?? 0;
-      const atWar = nation?.warTargets.has(f2.id);
-      const allied = nation?.allies.has(f2.id);
-      if (atWar) {
-        text += ` ⚔️${f2.emoji}`;
-      } else if (allied) {
-        text += ` 🤝${f2.emoji}`;
-      } else if (Math.abs(rel) > 0.2) {
-        const icon = rel > 0.3 ? '🤝' : rel < -0.3 ? '😡' : '😐';
-        text += ` ${icon}${f2.emoji}`;
-      }
-    }
-  }
-
-  if (selectedId >= 0 && world.has(selectedId)) {
-    const lc = LifecycleStore.get(selectedId);
-    const bio = BiochemStore.get(selectedId);
-    const gen = GenomeStore.get(selectedId);
-    const social = SocialStore.get(selectedId);
-    if (lc && bio && gen && social) {
-      const c = bio.chemicals;
-      const g = gen.genome;
-      const faction = factionManager.getFaction(selectedId);
-      text += `\n\n── ${social.name} ──`;
-      text += `\n${faction ? faction.emoji + ' ' + faction.name : 'Wanderer'} [${getBreedLabel(g)}]`;
-      const sexIcon = g.sex === 0 ? '♂' : '♀';
-      const rank = hierarchySystem.getRank(selectedId);
-      const langLabel = social.language > 0 ? ` Lang:${social.language}` : '';
-      text += `\n${sexIcon} Age:${lc.age} ${lc.stage === LifeStage.Alive ? '❤️' : '💀'} HP:${(social.health * 100).toFixed(0)}% Rank:${(rank * 100).toFixed(0)}%${langLabel}`;
-      text += `\nEnergy:  ${bar(c[ChemId.Energy])}`;
-      text += `\nGlucose: ${bar(c[ChemId.Glucose])}`;
-      text += `\nHunger:  ${bar(c[ChemId.Hunger])}`;
-      text += `\nLife:    ${bar(c[ChemId.LifeForce])}`;
-      text += `\n`;
-      text += `\nAggro:${pct(g.aggression)} Social:${pct(g.sociability)}`;
-      text += `\nCurious:${pct(g.curiosity)} Creative:${pct(g.creativity)}`;
-      text += `\nLoyal:${pct(g.loyalty)} Spd:${g.speed.toFixed(1)}`;
-      text += `\nDiet B:${pct(g.dietBerry)} G:${pct(g.dietGrass)} R:${pct(g.dietRoot)}`;
-      text += `\nMono:${pct(g.monogamy)} Display:${pct(g.displayIntensity)}`;
-      text += `\nGather:${pct(g.gatherAffinity)} Hunt:${pct(g.huntAffinity)} Build:${pct(g.buildAffinity)} Hoard:${pct(g.hoardAffinity)}`;
-      const inv = InventoryStore.get(selectedId);
-      if (inv) {
-        const items = inv.slots.filter(s => s.item !== -1 && s.count > 0)
-          .map(s => `${ITEM_NAMES[s.item as ItemType] ?? '?'}×${s.count}`).join(' ');
-        text += `\nInv: ${items || 'empty'}`;
-      }
-      text += `\nRes:${social.resources} ${activityName(social.activity)}`;
-      const expr = ExpressionStore.get(selectedId);
-      if (expr) {
-        const moodIcon = expr.mood > 0.3 ? '😊' : expr.mood < -0.3 ? '😟' : '😐';
-        text += `\n${moodIcon} Mood:${expr.mood.toFixed(2)} [${expr.dominant}]`;
-      }
-      const mem = MemoryStore.get(selectedId);
-      if (mem) {
-        const activeMemories = mem.entries.filter(e => e.type !== 0);
-        text += `\nMemories: ${activeMemories.length}/${MEMORY_SLOTS}`;
-        const MEMORY_TYPE_NAMES = ['', '🍎Food', '⚠️Danger', '😡Hostile', '😊Friend', '🏠Home', '⛏️Resource', '🏗️Shelter'];
-        for (const m of activeMemories) {
-          text += `\n  ${MEMORY_TYPE_NAMES[m.type]} str:${m.strength.toFixed(2)}`;
-        }
-      }
-    }
-  } else {
-    text += `\n\nClick creature to inspect`;
-    text += `\n[P]ossess  [Tab]Charts  [D]ashboard`;
-  }
-
-  hud.textContent = text;
-}
-
-function bar(val: number): string {
-  const filled = Math.round(val * 12);
-  return '█'.repeat(filled) + '░'.repeat(12 - filled) + ` ${(val * 100).toFixed(0)}%`;
-}
-function pct(val: number): string { return `${(val * 100).toFixed(0)}%`; }
 const ACTIVITY_ICONS: Record<number, string> = {
   0: '',       // Idle — no icon
   1: '🚶',    // Walking
@@ -575,20 +537,17 @@ const ACTIVITY_ICONS: Record<number, string> = {
   6: '🔨',    // Building
   7: '⛏️',    // Gathering
 };
-function activityName(a: Activity): string {
-  return ['💤', '🚶', '🍽️', '💬', '⚔️', '💕', '🔨', '⛏️'][a] ?? '?';
-}
 
 // ── Initialization: Spawn 30 creatures in 4 dispersed groups ──────
 
 // Group definitions: center, personality bias, count
 const spawnGroups: { cx: number; cz: number; count: number; bias: (g: any) => void }[] = [
-  // Group 1: Builders near tower center (8 creatures)
-  { cx: 0, cz: 0, count: 8, bias(g) {
-    g.buildAffinity = 0.7 + Math.random() * 0.3;
-    g.creativity = 0.5 + Math.random() * 0.3;
+  // Group 1: Builders in NW quadrant (8 creatures)
+  { cx: -20, cz: 20, count: 8, bias(g) {
+    g.buildAffinity = 0.5 + Math.random() * 0.3;
+    g.creativity = 0.4 + Math.random() * 0.3;
     g.gatherAffinity = 0.4 + Math.random() * 0.3;
-    g.loyalty = 0.5 + Math.random() * 0.4;
+    g.sociability = 0.4 + Math.random() * 0.3;
   }},
   // Group 2: Gatherers in NE quadrant (8 creatures)
   { cx: 25, cz: 25, count: 8, bias(g) {
@@ -633,6 +592,37 @@ for (const group of spawnGroups) {
   }
 }
 
+// ── Pre-spawn CraftingTables near spawn areas ──────────────
+for (const group of spawnGroups) {
+  const [bx, , bz] = voxelWorld.worldToBlock(group.cx, 0, group.cz);
+  const surfY = voxelWorld.getHeight(bx, bz);
+  voxelWorld.setBlock(bx, surfY + 1, bz, Block.CraftingTable);
+}
+
+// (Grand Exchange removed — creatures trade directly with each other)
+
+// Rebuild all dirty chunks after pre-placed structures
+voxelRenderer.buildAll();
+
+// ── Game UI ──────────────────────────────────────────────────
+
+const gameUI = new GameUI({
+  world,
+  factionManager,
+  politicsSystem,
+  hierarchySystem,
+  dayNight,
+  seasonState,
+  generation: () => generation,
+  selectedId: () => selectedId,
+  onSelectCreature: (id: number) => {
+    jumpToCreature(id);
+  },
+  onCycleCreature: (dir: number) => {
+    cycleCreature(dir);
+  },
+});
+
 // ── Simulation Loop ─────────────────────────────────────────
 
 const SIM_DT = 0.05;
@@ -651,13 +641,17 @@ function animate(): void {
 
   zodiac.advance();
   updateSeason(seasonState);
+  updateDayNight(dayNight);
   world.update(SIM_DT);
   godMode.update(world, camera);
   dashboard.selectedCreatureId = selectedId;
   dashboard.tick(world, zodiac.tick);
 
-  // Update voxel view-distance loading based on camera target
-  voxelRenderer.updateCamera(cameraTarget.x, cameraTarget.z);
+  // Update voxel view-distance loading based on camera position
+  voxelRenderer.updateCamera(camTarget.x, camTarget.z);
+
+  // Water flow simulation
+  waterFlow.tick();
 
   // Rebuild dirty voxel chunks (block changes from mining/construction)
   voxelRenderer.rebuildDirty();
@@ -675,13 +669,99 @@ function animate(): void {
   critterManager.tick(cxArr, czArr, aliveCreatures.length);
   critterRenderer.update(critterManager);
 
-  // Subtle sun color shift (warm→cool cycle)
-  const sunHue = 0.08 + Math.sin(time * 0.05) * 0.03;
-  sunLight.color.setHSL(sunHue, 0.6, 0.75);
+  // Night monsters
+  const crowdArr = new Float32Array(aliveCreatures.length);
+  for (let i = 0; i < aliveCreatures.length; i++) {
+    const s = SensesStore.get(aliveCreatures[i]);
+    crowdArr[i] = s ? s.crowdDensity : 0;
+  }
+  monsterManager.tick(
+    dayNight, voxelWorld,
+    cxArr, czArr, crowdArr, aliveCreatures.length, aliveCreatures,
+    (creatureId: number, damage: number) => {
+      const social = SocialStore.get(creatureId);
+      if (social) social.health = Math.max(0, social.health - damage);
+      const biochem = BiochemStore.get(creatureId);
+      if (biochem) {
+        biochem.chemicals[ChemId.Pain] = Math.min(1, biochem.chemicals[ChemId.Pain] + damage * 2);
+        biochem.chemicals[ChemId.Punishment] = Math.min(1, biochem.chemicals[ChemId.Punishment] + damage);
+      }
+    },
+  );
+  // Creature-to-monster combat: creatures with wantFightMonster damage nearby monsters
+  for (let ci = 0; ci < aliveCreatures.length; ci++) {
+    const cid = aliveCreatures[ci];
+    const motor = MotorStore.get(cid);
+    if (!motor?.wantFightMonster) continue;
 
-  // Background color subtle shift
-  const bgHue = 0.55 + Math.sin(time * 0.03) * 0.03;
-  (scene.background as THREE.Color).setHSL(bgHue, 0.3, 0.7);
+    const ct = TransformStore.get(cid)!;
+    const inv = InventoryStore.get(cid);
+    const genome = GenomeStore.get(cid)?.genome;
+    if (!genome) continue;
+
+    for (let mi = 0; mi < MAX_MONSTERS; mi++) {
+      if (!monsterManager.alive[mi]) continue;
+      const dx = monsterManager.x[mi] - ct.x;
+      const dz = monsterManager.z[mi] - ct.z;
+      const dsq = dx * dx + dz * dz;
+
+      if (dsq < 6) { // within ~2.5 units
+        const baseDmg = 0.015 * (0.5 + genome.aggression);
+        const weaponMult = inv ? getBestWeapon(inv).damage : 1.0;
+        const killed = monsterManager.takeDamage(mi, baseDmg * weaponMult);
+
+        // Reward for fighting
+        const biochem = BiochemStore.get(cid);
+        if (biochem) {
+          biochem.chemicals[ChemId.Reward] = Math.min(1, biochem.chemicals[ChemId.Reward] + 0.03);
+        }
+
+        // Speech when fighting (vocab-gated)
+        const social = SocialStore.get(cid);
+        if (social) {
+          social.activity = Activity.Fighting;
+          if (killed) {
+            const fVocab = VocabularyStore.get(cid);
+            if (fVocab) {
+              learnEmoji(fVocab, '⚔️');
+              social.speechEmoji = '⚔️';
+              social.speechTimer = 40;
+            }
+          }
+        }
+
+        break; // one monster per tick
+      }
+    }
+  }
+
+  monsterRenderer.update(monsterManager);
+
+  // Day/Night visual cycle
+  const ll = dayNight.lightLevel;
+
+  // Sun orbits via sunAngle
+  const sunDist = 80;
+  sunLight.position.set(
+    Math.cos(dayNight.sunAngle) * sunDist,
+    Math.sin(dayNight.sunAngle) * sunDist,
+    20,
+  );
+  sunLight.intensity = ll * 1.3;
+
+  // Ambient light dims at night
+  ambientLight.intensity = 0.15 + ll * 0.45;
+
+  // Sky color darkens at night
+  const skyLightness = 0.1 + ll * 0.6;
+  (scene.background as THREE.Color).setHSL(0.58, 0.3, skyLightness);
+
+  // Fog thickens at night
+  (scene.fog as THREE.FogExp2).density = 0.005 + (1 - ll) * 0.01;
+
+  // Sun color: warm at sunrise/sunset, white at noon
+  const sunHue = 0.08 + Math.sin(dayNight.timeOfDay * Math.PI) * 0.02;
+  sunLight.color.setHSL(sunHue, 0.6, 0.5 + ll * 0.3);
 
   // Periodic diplomacy, territory, and politics updates
   diplomacyTimer++;
@@ -733,7 +813,7 @@ function animate(): void {
   hudTimer++;
   if (hudTimer >= 10) {
     hudTimer = 0;
-    updateHUD();
+    gameUI.update();
   }
 
   updateCamera();

@@ -10,8 +10,11 @@ import { ComponentStorage } from '../ecs/Component';
 import { ResourceGrid, Resource, GRID_SIZE, CELL_SIZE, GRID_CELLS } from '../world/ResourceGrid';
 import type { FactionManager } from '../world/FactionSystem';
 import type { CritterManager } from '../world/PreyCritters';
+import type { MonsterManager } from '../world/MonsterManager';
+import { MONSTER_EMOJI, MAX_MONSTERS } from '../world/MonsterManager';
 import type { VoxelWorld } from '../voxel/VoxelWorld';
 import { Block, BLOCK_PROPS } from '../voxel/BlockTypes';
+import { VocabularyStore, learn } from '../components/Vocabulary';
 
 // Food types kept for backward compat (ground coloring in main.ts)
 export const enum FoodType { Berry = 0, Grass = 1, Root = 2 }
@@ -37,6 +40,7 @@ export class SensorySystem extends System {
   voxelWorld: VoxelWorld | null = null;
   factionManager: FactionManager | null = null;
   critterManager: CritterManager | null = null;
+  monsterManager: MonsterManager | null = null;
 
   update(world: World, _dt: number): void {
     const creatures = world.query(this.query);
@@ -347,6 +351,72 @@ export class SensorySystem extends System {
           while (relAngle > Math.PI) relAngle -= 2 * Math.PI;
           while (relAngle < -Math.PI) relAngle += 2 * Math.PI;
           senses.nearestPreyAngle = relAngle / Math.PI;
+        }
+      }
+
+      // ── Monster sensing ────────────────────────────────
+      senses.monsterVisible = false;
+      senses.nearestMonsterDist = 1;
+      senses.nearestMonsterAngle = 0;
+      senses.nearestMonsterIndex = -1;
+      senses.nearestMonsterType = -1;
+
+      if (this.monsterManager) {
+        let bestMonsterDSq = Infinity;
+        let bestMonsterIdx = -1;
+        let bestMonsterX = 0;
+        let bestMonsterZ = 0;
+
+        for (let mi = 0; mi < MAX_MONSTERS; mi++) {
+          if (!this.monsterManager.alive[mi]) continue;
+          const mx = this.monsterManager.x[mi];
+          const mz = this.monsterManager.z[mi];
+          const dsq = distSq(transform.x, transform.z, mx, mz);
+          if (dsq < bestMonsterDSq && dsq < SIGHT_RANGE_SQ) {
+            bestMonsterDSq = dsq;
+            bestMonsterIdx = mi;
+            bestMonsterX = mx;
+            bestMonsterZ = mz;
+          }
+        }
+
+        if (bestMonsterIdx >= 0) {
+          senses.monsterVisible = true;
+          senses.nearestMonsterIndex = bestMonsterIdx;
+          senses.nearestMonsterDist = Math.min(1, Math.sqrt(bestMonsterDSq) / SIGHT_RANGE);
+          senses.nearestMonsterType = this.monsterManager.type[bestMonsterIdx];
+          const dx = bestMonsterX - transform.x;
+          const dz = bestMonsterZ - transform.z;
+          const angle = Math.atan2(dx, dz);
+          let relAngle = angle - transform.rotation;
+          while (relAngle > Math.PI) relAngle -= 2 * Math.PI;
+          while (relAngle < -Math.PI) relAngle += 2 * Math.PI;
+          senses.nearestMonsterAngle = relAngle / Math.PI;
+        }
+      }
+
+      // ── Vocabulary discovery from environment ─────────────
+      const vocab = VocabularyStore.get(id);
+      if (vocab && Math.random() < 0.01) { // low chance per tick to avoid spam
+        // Water nearby → learn water emoji
+        if (this.voxelWorld && this.voxelWorld.isWaterAt(
+          transform.x + Math.cos(transform.rotation) * 3,
+          transform.z + Math.sin(transform.rotation) * 3,
+        )) {
+          learn(vocab, '💧');
+        }
+        // Building nearby → learn building emoji
+        if (senses.buildingVisible && senses.nearestBuildingDist < 0.3) {
+          learn(vocab, '🏠');
+        }
+        // Prey visible → learn prey emoji
+        if (senses.preyVisible) {
+          learn(vocab, '🐾');
+        }
+        // Monster visible → learn monster emoji
+        if (senses.monsterVisible && senses.nearestMonsterType > 0) {
+          const mEmoji = MONSTER_EMOJI[senses.nearestMonsterType];
+          if (mEmoji) learn(vocab, mEmoji);
         }
       }
     }

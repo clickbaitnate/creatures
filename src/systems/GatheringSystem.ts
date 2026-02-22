@@ -9,11 +9,12 @@ import { InventoryStore, addItem, hasSpace, ItemType } from '../components/Inven
 import { SensesStore } from '../components/Senses';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
 import { SocialStore, Activity } from '../components/Social';
+import { VocabularyStore, ITEM_EMOJI, learn } from '../components/Vocabulary';
 import { clamp, distSq } from '../utils/Math';
 import type { VoxelWorld } from '../voxel/VoxelWorld';
 import { Block, BLOCK_PROPS } from '../voxel/BlockTypes';
 import { BLOCK_SIZE } from '../voxel/VoxelWorld';
-import { inBabelZone } from '../world/BabelZone';
+import type { WaterFlow } from '../voxel/WaterFlow';
 
 const GATHER_ENERGY_COST = 0.0002;
 
@@ -33,6 +34,7 @@ export class GatheringSystem extends System {
   readonly priority = 57;
 
   voxelWorld: VoxelWorld | null = null;
+  waterFlow: WaterFlow | null = null;
 
   update(world: World, _dt: number): void {
     if (!this.voxelWorld) return;
@@ -52,14 +54,6 @@ export class GatheringSystem extends System {
       if (!biochem || !genome) {
         inv.gatherTarget = -1;
         inv.gatherProgress = 0;
-        continue;
-      }
-
-      // Skip gathering in Babel exclusion zone
-      if (inBabelZone(transform.x, transform.z)) {
-        inv.gatherTarget = -1;
-        inv.gatherProgress = 0;
-        mineStates.delete(id);
         continue;
       }
 
@@ -83,8 +77,9 @@ export class GatheringSystem extends System {
       let ms = mineStates.get(id);
 
       if (!ms) {
-        // Find a surface block to mine
-        const target = this.findMineTarget(transform);
+        // Find a surface block to mine — hungry creatures prioritize food blocks
+        const hungerLevel = biochem.chemicals[ChemId.Hunger];
+        const target = this.findMineTarget(transform, hungerLevel);
         if (!target) {
           inv.gatherTarget = -1;
           inv.gatherProgress = 0;
@@ -145,19 +140,25 @@ export class GatheringSystem extends System {
           addItem(inv, props.mineYield);
         }
         this.voxelWorld!.setBlock(ms.targetBX, ms.targetBY, ms.targetBZ, Block.Air);
+        // Notify water flow system about mined block
+        if (this.waterFlow) {
+          this.waterFlow.markDirty(ms.targetBX, ms.targetBZ);
+        }
         mineStates.delete(id);
 
         // Reward
         biochem.chemicals[ChemId.Reward] = clamp(biochem.chemicals[ChemId.Reward] + 0.15, 0, 1);
 
+        // Vocabulary: learn the gathered item's emoji
+        const vocab = VocabularyStore.get(id);
+        const item = props.mineYield;
+        const emoji = item !== null ? (ITEM_EMOJI[item] ?? '📦') : '📦';
+        if (vocab && item !== null) {
+          learn(vocab, emoji);
+        }
+
         // Speech
         if (social && Math.random() < 0.3) {
-          const item = props.mineYield;
-          const emoji = item === ItemType.RawBerry ? '🍎' :
-                        item === ItemType.RawGrass ? '🌿' :
-                        item === ItemType.RawWood ? '🪵' :
-                        item === ItemType.RawStone ? '🪨' :
-                        item === ItemType.RawOre ? '⛏️' : '📦';
           social.speechEmoji = emoji;
           social.speechTimer = 30;
         }
@@ -168,12 +169,36 @@ export class GatheringSystem extends System {
     }
   }
 
-  /** Find nearest mineable surface block within scan radius. */
-  private findMineTarget(transform: { x: number; z: number }): [number, number, number] | null {
+  /** Food-yielding block types */
+  private static FOOD_BLOCKS = new Set([Block.BerryBush, Block.TallGrass, Block.Grass, Block.DarkGrass]);
+
+  /** Find nearest mineable surface block within scan radius.
+   *  When hungry, prioritize food blocks (BerryBush, TallGrass, Grass). */
+  private findMineTarget(transform: { x: number; z: number }, hunger: number): [number, number, number] | null {
+    if (!this.voxelWorld) return null;
+
+    const hungryMode = hunger > 0.25;
+    const scanR = hunger > 0.5 ? 16 : 8; // wider search when starving
+
+    // In hungry mode, first scan for food blocks only
+    if (hungryMode) {
+      const foodTarget = this.scanForBlocks(transform, scanR, true);
+      if (foodTarget) return foodTarget;
+    }
+
+    // General mode: any mineable block
+    return this.scanForBlocks(transform, 8, false);
+  }
+
+  /** Scan for mineable blocks. If foodOnly=true, only return food-yielding blocks. */
+  private scanForBlocks(
+    transform: { x: number; z: number },
+    scanR: number,
+    foodOnly: boolean,
+  ): [number, number, number] | null {
     if (!this.voxelWorld) return null;
 
     const [cbx, , cbz] = this.voxelWorld.worldToBlock(transform.x, 0, transform.z);
-    const scanR = 8;
     let bestDSq = Infinity;
     let best: [number, number, number] | null = null;
 
@@ -191,12 +216,14 @@ export class GatheringSystem extends System {
           const below = this.voxelWorld.getBlock(bx, height - 1, bz);
           if (below === Block.Air || below === Block.Water || !BLOCK_PROPS[below].mineable) continue;
           if (BLOCK_PROPS[below].mineYield === null) continue;
+          if (foodOnly && !GatheringSystem.FOOD_BLOCKS.has(below)) continue;
           const dsq = dx * dx + dz * dz;
           if (dsq < bestDSq) {
             bestDSq = dsq;
             best = [bx, height - 1, bz];
           }
         } else if (BLOCK_PROPS[block].mineable && BLOCK_PROPS[block].mineYield !== null) {
+          if (foodOnly && !GatheringSystem.FOOD_BLOCKS.has(block)) continue;
           const dsq = dx * dx + dz * dz;
           if (dsq < bestDSq) {
             bestDSq = dsq;

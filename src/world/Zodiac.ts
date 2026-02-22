@@ -1,19 +1,24 @@
-// Zodiac cycle: 12 signs, each ~800 ticks. Full cycle = 9600 ticks.
+// Zodiac cycle: 12 signs synchronized with seasons.
+// 3 signs per season, full cycle = 1 year (4000 ticks, matching Seasons.ts).
 // Each sign applies global multipliers to relevant systems.
 
 export const enum ZodiacSign {
-  Aries = 0,
-  Taurus = 1,
-  Gemini = 2,
-  Cancer = 3,
-  Leo = 4,
-  Virgo = 5,
-  Libra = 6,
-  Scorpio = 7,
-  Sagittarius = 8,
-  Capricorn = 9,
-  Aquarius = 10,
-  Pisces = 11,
+  // Spring signs
+  Aries = 0,       // early spring
+  Taurus = 1,      // mid spring
+  Gemini = 2,      // late spring
+  // Summer signs
+  Cancer = 3,      // early summer
+  Leo = 4,         // mid summer
+  Virgo = 5,       // late summer
+  // Autumn signs
+  Libra = 6,       // early autumn
+  Scorpio = 7,     // mid autumn
+  Sagittarius = 8, // late autumn
+  // Winter signs
+  Capricorn = 9,   // early winter
+  Aquarius = 10,   // mid winter
+  Pisces = 11,     // late winter
 }
 
 export const ZODIAC_NAMES = [
@@ -22,8 +27,10 @@ export const ZODIAC_NAMES = [
   '♐ Sagittarius', '♑ Capricorn', '♒ Aquarius', '♓ Pisces',
 ];
 
-export const SIGN_DURATION = 800; // ticks per sign
-export const FULL_CYCLE = SIGN_DURATION * 12; // 9600 ticks
+// Sync with Seasons.ts: CYCLE_LENGTH = 4000, so each sign = 4000/12 ≈ 333 ticks
+const YEAR_LENGTH = 4000; // must match SEASON_LENGTH * 4 in Seasons.ts
+export const SIGN_DURATION = Math.floor(YEAR_LENGTH / 12); // 333 ticks per sign
+export const FULL_CYCLE = YEAR_LENGTH;
 
 export interface ZodiacEffects {
   aggressionMod: number;

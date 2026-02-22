@@ -26,6 +26,12 @@ export const enum ItemType {
   IronSword = 26,
   IronArmor = 27,
   SaplingItem = 28,
+  Boat = 30,
+  CraftingTableItem = 31,
+  WoodSword = 32,
+  StoneSword = 33,
+  Shield = 34,
+  Ship = 35,
 }
 
 export const ITEM_NAMES: Partial<Record<ItemType, string>> = {
@@ -53,6 +59,12 @@ export const ITEM_NAMES: Partial<Record<ItemType, string>> = {
   [ItemType.IronSword]: 'IronSword',
   [ItemType.IronArmor]: 'IronArmor',
   [ItemType.SaplingItem]: 'Sapling',
+  [ItemType.Boat]: 'Boat',
+  [ItemType.CraftingTableItem]: 'CraftTable',
+  [ItemType.WoodSword]: 'WoodSword',
+  [ItemType.StoneSword]: 'StoneSword',
+  [ItemType.Shield]: 'Shield',
+  [ItemType.Ship]: 'Ship',
 };
 
 export const MAX_SLOTS = 6;
@@ -175,11 +187,11 @@ export function isTool(item: ItemType): boolean {
 }
 
 export function isWeapon(item: ItemType): boolean {
-  return item === ItemType.IronSword;
+  return item === ItemType.IronSword || item === ItemType.WoodSword || item === ItemType.StoneSword;
 }
 
 export function isArmor(item: ItemType): boolean {
-  return item === ItemType.IronArmor;
+  return item === ItemType.IronArmor || item === ItemType.Shield;
 }
 
 export function hasWeapon(inv: InventoryData): boolean {
@@ -194,6 +206,42 @@ export function hasArmor(inv: InventoryData): boolean {
     if (isArmor(slot.item) && slot.count > 0) return true;
   }
   return false;
+}
+
+/** Damage multiplier for weapon types */
+export const WEAPON_DAMAGE: Partial<Record<ItemType, number>> = {
+  [ItemType.WoodSword]: 1.3,
+  [ItemType.StoneSword]: 1.6,
+  [ItemType.IronSword]: 2.0,
+};
+
+/** Damage reduction for armor types */
+export const ARMOR_REDUCTION: Partial<Record<ItemType, number>> = {
+  [ItemType.IronArmor]: 0.4,
+  [ItemType.Shield]: 0.25,
+};
+
+/** Get the best weapon from inventory and its damage multiplier */
+export function getBestWeapon(inv: InventoryData): { item: ItemType; damage: number } {
+  let best = { item: ItemType.None, damage: 1.0 };
+  for (const slot of inv.slots) {
+    if (isWeapon(slot.item) && slot.count > 0) {
+      const dmg = WEAPON_DAMAGE[slot.item] ?? 1.0;
+      if (dmg > best.damage) best = { item: slot.item, damage: dmg };
+    }
+  }
+  return best;
+}
+
+/** Get total armor damage reduction from inventory */
+export function getArmorReduction(inv: InventoryData): number {
+  let reduction = 0;
+  for (const slot of inv.slots) {
+    if (isArmor(slot.item) && slot.count > 0) {
+      reduction += ARMOR_REDUCTION[slot.item] ?? 0;
+    }
+  }
+  return Math.min(reduction, 0.6); // cap at 60% reduction
 }
 
 export const InventoryStore = new ComponentStorage<InventoryData>();

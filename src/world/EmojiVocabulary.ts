@@ -235,7 +235,9 @@ export function socialSpeechEmoji(
   return pick(SOCIAL_SPEECH[context]);
 }
 
-/** Match a philosophy archetype to a faction based on member behavior profile */
+/** Match a philosophy archetype to a faction based on collective vocabulary knowledge.
+ *  Philosophies are scored by how many of their symbols the faction collectively knows.
+ *  Strong random factor and diversity penalty ensure variety. */
 export function matchPhilosophy(profile: {
   avgAggression: number;
   avgSociability: number;
@@ -246,33 +248,38 @@ export function matchPhilosophy(profile: {
   avgBuildAffinity: number;
   avgHoardAffinity: number;
   dominantBiome: string;
-}): PhilosophyArchetype {
+}, collectiveVocabulary?: Set<string>, usedPhilosophies?: Set<string>): PhilosophyArchetype {
   let bestMatch = PHILOSOPHIES[0];
   let bestScore = -Infinity;
 
   for (const phil of PHILOSOPHIES) {
     let score = 0;
+
+    // Vocabulary-based scoring: how many of the philosophy's symbols does the faction know?
+    if (collectiveVocabulary) {
+      let symbolsKnown = 0;
+      for (const sym of phil.symbols) {
+        if (collectiveVocabulary.has(sym)) symbolsKnown++;
+      }
+      score += symbolsKnown * 1.5; // 1.5 per known symbol
+    }
+
+    // Trait bias scoring (legacy, weaker influence)
     for (const [trait, bias] of Object.entries(phil.traitBias)) {
       const key = `avg${trait.charAt(0).toUpperCase()}${trait.slice(1)}` as keyof typeof profile;
       const val = profile[key];
       if (typeof val === 'number') {
-        score += val * (bias as number) * 10;
+        score += val * (bias as number) * 5;
       }
     }
 
-    // Biome bonuses
-    if (profile.dominantBiome === 'Forest' && phil.name === 'Naturism') score += 2;
-    if (profile.dominantBiome === 'Forest' && phil.name === 'Fungal Mind') score += 1.5;
-    if (profile.dominantBiome === 'Rocky' && phil.name === 'Stonekeepers') score += 2;
-    if (profile.dominantBiome === 'Rocky' && phil.name === 'Iron Will') score += 1.5;
-    if (profile.dominantBiome === 'Wetland' && phil.name === 'Deepwater') score += 2;
-    if (profile.dominantBiome === 'Meadow' && phil.name === 'Harvest Rite') score += 2;
-    if (profile.dominantBiome === 'Meadow' && phil.name === 'Harmony Seekers') score += 1;
-    if (profile.dominantBiome === 'Scrubland' && phil.name === 'Wanderers') score += 1.5;
-    if (profile.dominantBiome === 'Scrubland' && phil.name === 'Chaos Dancers') score += 1;
+    // Diversity penalty: already-used philosophies score lower
+    if (usedPhilosophies && usedPhilosophies.has(phil.name)) {
+      score -= 3.0;
+    }
 
-    // Add small random perturbation for variety
-    score += Math.random() * 0.5;
+    // Strong random factor for emergent diversity
+    score += Math.random() * 2.0;
 
     if (score > bestScore) {
       bestScore = score;

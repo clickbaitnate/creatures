@@ -71,6 +71,9 @@ export function crossover(parentA: CreatureGenome, parentB: CreatureGenome): Cre
     monogamy: blend(parentA.monogamy, parentB.monogamy),
     mateSelectiveness: blend(parentA.mateSelectiveness, parentB.mateSelectiveness),
 
+    buildingMutationRate: blend(parentA.buildingMutationRate, parentB.buildingMutationRate),
+    buildingMaterialPref: blend(parentA.buildingMaterialPref, parentB.buildingMaterialPref),
+
     speciesMarker,
 
     birthSign: 0, // set at birth by Zodiac system

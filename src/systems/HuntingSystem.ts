@@ -11,6 +11,7 @@ import { ChemId } from '../biochemistry/ChemicalRegistry';
 import { SocialStore, Activity } from '../components/Social';
 import { CritterManager } from '../world/PreyCritters';
 import { distSq, clamp } from '../utils/Math';
+import { VocabularyStore, learn } from '../components/Vocabulary';
 
 const CATCH_RADIUS_SQ = 1.5 * 1.5;
 const HUNT_ENERGY_COST = 0.001;
@@ -68,11 +69,16 @@ export class HuntingSystem extends System {
         addItem(inv, ItemType.RawMeat);
         biochem.chemicals[ChemId.Reward] = clamp(biochem.chemicals[ChemId.Reward] + 0.3, 0, 1);
 
-        // Speech: announce the kill
+        // Speech: announce the kill (learn hunting emojis)
         const social = SocialStore.get(id);
         if (social) {
-          social.speechEmoji = '🎯🍖';
-          social.speechTimer = 35;
+          const hVocab = VocabularyStore.get(id);
+          if (hVocab) {
+            learn(hVocab, '🎯');
+            learn(hVocab, '🥩');
+            social.speechEmoji = '🎯';
+            social.speechTimer = 35;
+          }
           social.activity = Activity.Idle; // briefly celebrates
         }
       } else {

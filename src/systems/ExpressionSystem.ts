@@ -69,6 +69,7 @@ export class ExpressionSystem extends System {
       const targetCuriosity = clamp(genome.curiosity * (1 - chemicals[ChemId.Hunger]) * (1 - chemicals[ChemId.Tiredness]), 0, 1);
       const targetTiredness = chemicals[ChemId.Tiredness];
       const targetPain = chemicals[ChemId.Pain];
+      const targetAnxiety = clamp(chemicals[ChemId.Anxiety] * 1.5, 0, 1);
 
       // Smooth transitions
       expr.happiness = lerp(expr.happiness, targetHappiness, LERP_SPEED);
@@ -77,10 +78,11 @@ export class ExpressionSystem extends System {
       expr.curiosity = lerp(expr.curiosity, targetCuriosity, LERP_SPEED);
       expr.tiredness = lerp(expr.tiredness, targetTiredness, LERP_SPEED);
       expr.pain = lerp(expr.pain, targetPain, LERP_SPEED);
+      expr.anxiety = lerp(expr.anxiety, targetAnxiety, LERP_SPEED);
 
-      // Compute mood: positive emotions minus negative
+      // Compute mood: positive emotions minus negative (anxiety contributes negatively)
       expr.mood = clamp(
-        (expr.happiness + expr.curiosity * 0.5) - (expr.fear + expr.anger + expr.pain + expr.tiredness * 0.5) * 0.5,
+        (expr.happiness + expr.curiosity * 0.5) - (expr.fear + expr.anger + expr.pain + expr.tiredness * 0.5 + expr.anxiety * 0.4) * 0.5,
         -1, 1,
       );
 
@@ -92,6 +94,7 @@ export class ExpressionSystem extends System {
         { name: 'curious', val: expr.curiosity },
         { name: 'tired', val: expr.tiredness },
         { name: 'pain', val: expr.pain },
+        { name: 'anxious', val: expr.anxiety },
       ];
       let maxVal = 0;
       let maxName = 'neutral';
@@ -150,18 +153,18 @@ function applyExpressions(expr: ExpressionData, m: ExpressionMeshRefs): void {
 
   switch (dominant.name) {
     case 'happy': {
-      // Squint eyes, wider mouth
+      // Squint eyes, wider mouth (more dramatic for box eyes)
       const t = intensity;
-      m.eyeL.scale.y = lerp(m.eyeL.scale.y, m.origEyeLScaleY * 0.85, t);
-      m.eyeR.scale.y = lerp(m.eyeR.scale.y, m.origEyeRScaleY * 0.85, t);
+      m.eyeL.scale.y = lerp(m.eyeL.scale.y, m.origEyeLScaleY * 0.6, t);
+      m.eyeR.scale.y = lerp(m.eyeR.scale.y, m.origEyeRScaleY * 0.6, t);
       m.mouth.scale.x = lerp(m.mouth.scale.x, m.origMouthScaleX * 1.2, t);
       break;
     }
     case 'fear': {
       // Wide eyes, shrink pupils, mouth tall O, duck head, crouch
       const t = intensity;
-      m.eyeL.scale.y = lerp(m.eyeL.scale.y, m.origEyeLScaleY * 1.3, t);
-      m.eyeR.scale.y = lerp(m.eyeR.scale.y, m.origEyeRScaleY * 1.3, t);
+      m.eyeL.scale.y = lerp(m.eyeL.scale.y, m.origEyeLScaleY * 1.5, t);
+      m.eyeR.scale.y = lerp(m.eyeR.scale.y, m.origEyeRScaleY * 1.5, t);
       m.pupilL.scale.setScalar(lerp(m.pupilL.scale.x, m.origPupilLScale * 0.7, t));
       m.pupilR.scale.setScalar(lerp(m.pupilR.scale.x, m.origPupilRScale * 0.7, t));
       m.mouth.scale.y = lerp(m.mouth.scale.y, m.origMouthScaleY * 2.0, t);
@@ -199,6 +202,17 @@ function applyExpressions(expr: ExpressionData, m: ExpressionMeshRefs): void {
       m.eyeL.scale.y = lerp(m.eyeL.scale.y, m.origEyeLScaleY * 0.3, t);
       m.eyeR.scale.y = lerp(m.eyeR.scale.y, m.origEyeRScaleY * 0.3, t);
       m.mouth.rotation.z = lerp(m.mouth.rotation.z, 0.1 * t, t);
+      break;
+    }
+    case 'anxious': {
+      // Darting eyes (jitter), nervous head twitch, wide eyes
+      const t = intensity;
+      const jitter = Math.sin(Date.now() * 0.02) * 0.03 * t;
+      m.eyeL.scale.y = lerp(m.eyeL.scale.y, m.origEyeLScaleY * 1.15, t);
+      m.eyeR.scale.y = lerp(m.eyeR.scale.y, m.origEyeRScaleY * 1.15, t);
+      m.pupilL.position.x += jitter;
+      m.pupilR.position.x += jitter;
+      m.head.rotation.z = lerp(m.head.rotation.z, Math.sin(Date.now() * 0.01) * 0.05 * t, t);
       break;
     }
   }

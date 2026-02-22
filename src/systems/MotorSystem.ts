@@ -8,6 +8,7 @@ import { BiochemStore } from '../components/Biochemistry';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
 import { SocialStore, Activity } from '../components/Social';
+import { InventoryStore, countItem, ItemType } from '../components/Inventory';
 import { clamp } from '../utils/Math';
 import { terrainY } from '../world/Environment';
 import type { VoxelWorld } from '../voxel/VoxelWorld';
@@ -83,12 +84,41 @@ export class MotorSystem extends System {
         }
       }
 
+      // Water barrier check: block movement into water unless creature has a boat
+      if (this.voxelWorld) {
+        const nextX = transform.x + Math.sin(transform.rotation) * moveSpeed;
+        const nextZ = transform.z + Math.cos(transform.rotation) * moveSpeed;
+        if (this.voxelWorld.isWaterAt(nextX, nextZ)) {
+          const inv = InventoryStore.get(id);
+          const hasBoat = inv ? countItem(inv, ItemType.Boat) > 0 : false;
+          if (!hasBoat) {
+            // Block movement, turn creature away
+            transform.rotation += Math.PI * 0.5 + Math.random() * Math.PI;
+            moveSpeed = 0;
+          } else {
+            // Boat: allow crossing at 50% speed
+            moveSpeed *= 0.5;
+          }
+        }
+      }
+
       transform.x += Math.sin(transform.rotation) * moveSpeed;
       transform.z += Math.cos(transform.rotation) * moveSpeed;
 
       // Snap to terrain height — use voxel world if available, else fallback to terrainY
       if (this.voxelWorld) {
         transform.y = this.voxelWorld.getHeightWorld(transform.x, transform.z);
+
+        // If creature is standing on water and has no boat, turn randomly and flee at 2x speed
+        if (this.voxelWorld.isWaterAt(transform.x, transform.z)) {
+          const inv = InventoryStore.get(id);
+          const hasBoat = inv ? countItem(inv, ItemType.Boat) > 0 : false;
+          if (!hasBoat) {
+            transform.rotation += Math.PI * (0.5 + Math.random());
+            transform.x += Math.sin(transform.rotation) * 0.1;
+            transform.z += Math.cos(transform.rotation) * 0.1;
+          }
+        }
       } else {
         transform.y = terrainY(transform.x, transform.z);
       }

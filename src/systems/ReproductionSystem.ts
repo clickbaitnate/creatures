@@ -16,6 +16,7 @@ import { distSq, clamp } from '../utils/Math';
 import { crossover } from '../genome/Crossover';
 import { mutate } from '../genome/Mutation';
 import { terrainY } from '../world/Environment';
+import { VocabularyStore, learn } from '../components/Vocabulary';
 
 const MATE_RANGE_SQ = 3.0 * 3.0;
 const REPRODUCTION_COOLDOWN = 150;
@@ -174,8 +175,8 @@ export class ReproductionSystem extends System {
             maleMating.courtshipTarget = femaleId;
             maleMating.courtshipProgress = 0;
             if (maleSocial) {
-              maleSocial.speechEmoji = '💘';
-              maleSocial.speechTimer = 30;
+              const mVocab = VocabularyStore.get(maleId);
+              if (mVocab) { learn(mVocab, '💘'); maleSocial.speechEmoji = '💘'; maleSocial.speechTimer = 30; }
             }
             continue; // don't mate yet
           }
@@ -186,8 +187,8 @@ export class ReproductionSystem extends System {
           if (maleMating.courtshipProgress < 1.0) {
             // Still courting — show display
             if (maleSocial && maleMating.courtshipProgress > 0.5) {
-              maleSocial.speechEmoji = '💃';
-              maleSocial.speechTimer = 10;
+              const mVocab2 = VocabularyStore.get(maleId);
+              if (mVocab2) { learn(mVocab2, '💃'); maleSocial.speechEmoji = '💃'; maleSocial.speechTimer = 10; }
             }
             continue;
           }
@@ -207,8 +208,8 @@ export class ReproductionSystem extends System {
             maleMating.courtshipTarget = -1;
             maleMating.courtshipProgress = 0;
             if (femaleSocial) {
-              femaleSocial.speechEmoji = '🙅';
-              femaleSocial.speechTimer = 25;
+              const fVocab = VocabularyStore.get(femaleId);
+              if (fVocab) { learn(fVocab, '🙅'); femaleSocial.speechEmoji = '🙅'; femaleSocial.speechTimer = 25; }
             }
             continue;
           }
@@ -235,13 +236,15 @@ export class ReproductionSystem extends System {
 
           // Mating visuals
           if (maleSocial) {
-            maleSocial.speechEmoji = '💋';
+            const mVocab3 = VocabularyStore.get(maleId);
+            if (mVocab3) { learn(mVocab3, '💋'); maleSocial.speechEmoji = '💋'; }
             maleSocial.speechTimer = MATING_DURATION;
             maleSocial.activity = Activity.Mating;
             maleSocial.matingTimer = MATING_DURATION;
           }
           if (femaleSocial) {
-            femaleSocial.speechEmoji = '💕';
+            const fVocab2 = VocabularyStore.get(femaleId);
+            if (fVocab2) { learn(fVocab2, '💕'); femaleSocial.speechEmoji = '💕'; }
             femaleSocial.speechTimer = MATING_DURATION;
             femaleSocial.activity = Activity.Mating;
             femaleSocial.matingTimer = MATING_DURATION;
@@ -271,14 +274,16 @@ export class ReproductionSystem extends System {
           this.layEgg(world, childGenome, eggX, eggZ, social?.factionId ?? 0);
 
           if (social) {
-            social.speechEmoji = '💋';
+            const sVocab = VocabularyStore.get(id);
+            if (sVocab) { learn(sVocab, '💋'); social.speechEmoji = '💋'; }
             social.speechTimer = MATING_DURATION;
             social.activity = Activity.Mating;
             social.matingTimer = MATING_DURATION;
           }
           const otherSocial = SocialStore.get(otherId);
           if (otherSocial) {
-            otherSocial.speechEmoji = '💕';
+            const oVocab = VocabularyStore.get(otherId);
+            if (oVocab) { learn(oVocab, '💕'); otherSocial.speechEmoji = '💕'; }
             otherSocial.speechTimer = MATING_DURATION;
             otherSocial.activity = Activity.Mating;
             otherSocial.matingTimer = MATING_DURATION;
