@@ -7,10 +7,10 @@ export const BLOCK_SIZE = 0.5;
 export const CHUNK_W = 16;
 export const CHUNK_H = 64;
 export const CHUNK_D = 16;
-export const CHUNKS_X = 13;
-export const CHUNKS_Z = 13;
-export const WORLD_BLOCKS_X = CHUNKS_X * CHUNK_W; // 208
-export const WORLD_BLOCKS_Z = CHUNKS_Z * CHUNK_D; // 208
+export const CHUNKS_X = 25;
+export const CHUNKS_Z = 25;
+export const WORLD_BLOCKS_X = CHUNKS_X * CHUNK_W; // 400
+export const WORLD_BLOCKS_Z = CHUNKS_Z * CHUNK_D; // 400
 export const SEA_LEVEL = 10;
 
 // World offset: block (0,0) maps to world (-WORLD_HALF, -WORLD_HALF)
@@ -152,8 +152,8 @@ export class VoxelWorld {
       }
     }
 
-    // Trees
-    for (let i = 0; i < 200; i++) {
+    // Trees (scaled ~3.7x for larger world)
+    for (let i = 0; i < 600; i++) {
       const bx = Math.floor(rng() * WORLD_BLOCKS_X);
       const bz = Math.floor(rng() * WORLD_BLOCKS_Z);
       const surfY = this.getHeightRaw(bx, bz);
@@ -182,8 +182,8 @@ export class VoxelWorld {
       }
     }
 
-    // Ore veins
-    for (let i = 0; i < 80; i++) {
+    // Ore veins (scaled ~3.7x for larger world)
+    for (let i = 0; i < 240; i++) {
       const cx = Math.floor(rng() * WORLD_BLOCKS_X);
       const cy = 2 + Math.floor(rng() * 6);
       const cz = Math.floor(rng() * WORLD_BLOCKS_Z);

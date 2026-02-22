@@ -3,14 +3,17 @@ import type { World } from '../ecs/World';
 import { BrainStore } from '../components/Brain';
 import { SensesStore } from '../components/Senses';
 import { BiochemStore } from '../components/Biochemistry';
+import { TransformStore } from '../components/Transform';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { brainTick, applyLearning } from '../brain/CTRNN';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
+import type { SeasonState } from '../world/Seasons';
+import type { VoxelWorld } from '../voxel/VoxelWorld';
 
-// 56-neuron layout:
-// Drive(0-3), Sense(4-19), Concept(20-35), Planning(36-43), Decision(44-55)
+// 60-neuron layout:
+// Drive(0-3), Sense(4-23), Concept(24-39), Planning(40-47), Decision(48-59)
 //
-// Sense inputs [4-19]:
+// Sense inputs [4-23]:
 //   4: food angle left      5: food angle right
 //   6: food near             7: food far
 //   8: creature angle left   9: creature angle right
@@ -19,19 +22,24 @@ import { ChemId } from '../biochemistry/ChemicalRegistry';
 //  14: resource near         15: prey near
 //  16: building near         17: threat level
 //  18: current tile has resource  19: prey visible
+//  20: season warmth         21: altitude
+//  22: terrain slope         23: time of day
 //
-// Planning [36-43]:
-//  36: goalFood  37: goalShelter  38: goalWeapon  39: goalSocial
-//  40: goalExplore  41: goalDefend  42: goalTrade  43: goalBuild
+// Planning [40-47]:
+//  40: goalFood  41: goalShelter  42: goalWeapon  43: goalSocial
+//  44: goalExplore  45: goalDefend  46: goalTrade  47: goalBuild
 //
-// Decision outputs [44-55]:
-//  44: moveForward  45: turnLeft  46: turnRight  47: speedMod
-//  48: eat          49: gather    50: hunt       51: build
-//  52: craft        53: deposit   54: trade      55: patrol
+// Decision outputs [48-59]:
+//  48: moveForward  49: turnLeft  50: turnRight  51: speedMod
+//  52: eat          53: gather    54: hunt       55: build
+//  56: craft        57: deposit   58: trade      59: patrol
 
 export class BrainSystem extends System {
   readonly query = BrainStore.bit | SensesStore.bit | BiochemStore.bit;
   readonly priority = 20;
+
+  seasonState: SeasonState | null = null;
+  voxelWorld: VoxelWorld | null = null;
 
   update(world: World, dt: number): void {
     const entities = world.query(this.query);
@@ -50,7 +58,7 @@ export class BrainSystem extends System {
       brain.inputs[2] = chemicals[ChemId.Pain];          // pain drive
       brain.inputs[3] = 1.0 - chemicals[ChemId.Energy];  // low energy = high drive
 
-      // Inject sensory inputs (Sense lobe: neurons 4-19)
+      // Inject sensory inputs (Sense lobe: neurons 4-23)
       // Food
       if (senses.foodVisible) {
         brain.inputs[4] = Math.max(0, -senses.nearestFoodAngle);  // food left
@@ -83,7 +91,36 @@ export class BrainSystem extends System {
       brain.inputs[17] = senses.threatLevel;
       // Current tile
       brain.inputs[18] = senses.currentResourceAmount;
-      brain.inputs[19] = senses.preyVisible ? 1 : 0;
+      // Crowd density (repurpose neuron 19 — was prey visible bool, redundant with 15)
+      brain.inputs[19] = senses.crowdDensity;
+
+      // Environment sense inputs (neurons 20-23)
+      // Season warmth: spring/summer warm (0.7-1.0), autumn cool (0.4), winter cold (0.1)
+      if (this.seasonState) {
+        const warmth = [0.7, 1.0, 0.4, 0.1][this.seasonState.season] ?? 0.5;
+        brain.inputs[20] = warmth;
+      }
+
+      // Altitude: normalized creature height (0=sea level, 1=high)
+      const transform = TransformStore.get(id);
+      if (transform) {
+        brain.inputs[21] = Math.min(1, Math.max(0, transform.y / 20));
+
+        // Terrain slope: difference in height ahead vs current position
+        if (this.voxelWorld) {
+          const aheadX = transform.x + Math.sin(transform.rotation) * 1.0;
+          const aheadZ = transform.z + Math.cos(transform.rotation) * 1.0;
+          const aheadY = this.voxelWorld.getHeightWorld(aheadX, aheadZ);
+          const slope = (aheadY - transform.y) / 1.0; // rise over run
+          brain.inputs[22] = Math.min(1, Math.max(-1, slope)); // -1 to 1
+        }
+      }
+
+      // Time of day: sinusoidal cycle based on season tick
+      if (this.seasonState) {
+        const dayPhase = (this.seasonState.tick % 200) / 200; // 200-tick day
+        brain.inputs[23] = Math.sin(dayPhase * Math.PI * 2) * 0.5 + 0.5;
+      }
 
       // Run CTRNN
       brainTick(brain, dt);

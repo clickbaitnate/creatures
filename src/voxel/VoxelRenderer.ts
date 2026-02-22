@@ -1,16 +1,21 @@
 // Chunk mesh lifecycle: create/rebuild/dispose Three.js meshes for voxel chunks.
+// View-distance based: only builds/keeps meshes within VIEW_DIST chunks of camera.
 
 import * as THREE from 'three';
-import { VoxelWorld, CHUNKS_X, CHUNKS_Z } from './VoxelWorld';
+import { VoxelWorld, CHUNKS_X, CHUNKS_Z, CHUNK_W, CHUNK_D, BLOCK_SIZE } from './VoxelWorld';
 import { meshChunk } from './ChunkMesher';
 
-const MAX_REBUILDS_PER_FRAME = 4; // limit remeshing per tick for perf
+const MAX_REBUILDS_PER_FRAME = 4;
+const VIEW_DIST = 10; // chunks around camera
 
 export class VoxelRenderer {
   private world: VoxelWorld;
   private scene: THREE.Scene;
   private chunkMeshes: (THREE.Mesh | null)[];
   private material: THREE.MeshLambertMaterial;
+  private loadedSet = new Set<number>(); // indices of currently loaded chunk meshes
+  private camCX = -999; // last camera chunk X
+  private camCZ = -999; // last camera chunk Z
 
   constructor(world: VoxelWorld, scene: THREE.Scene) {
     this.world = world;
@@ -22,24 +27,64 @@ export class VoxelRenderer {
     });
   }
 
-  /** Build all chunk meshes (call once after generate). */
+  /** Build chunk meshes within view distance of world center (call once after generate). */
   buildAll(): void {
-    for (let cz = 0; cz < CHUNKS_Z; cz++) {
-      for (let cx = 0; cx < CHUNKS_X; cx++) {
-        this.rebuildChunk(cx, cz);
-      }
-    }
+    this.updateCamera(0, 0);
   }
 
-  /** Rebuild only dirty chunks (call each frame). */
+  /** Update which chunks are loaded based on camera world position. */
+  updateCamera(wx: number, wz: number): void {
+    const worldHalf = (CHUNKS_X * CHUNK_W * BLOCK_SIZE) / 2;
+    const cx = Math.floor((wx + worldHalf) / (CHUNK_W * BLOCK_SIZE));
+    const cz = Math.floor((wz + worldHalf) / (CHUNK_D * BLOCK_SIZE));
+
+    // Only recompute if camera moved to a different chunk
+    if (cx === this.camCX && cz === this.camCZ) return;
+    this.camCX = cx;
+    this.camCZ = cz;
+
+    const newLoaded = new Set<number>();
+
+    // Determine which chunks should be loaded
+    for (let dz = -VIEW_DIST; dz <= VIEW_DIST; dz++) {
+      for (let dx = -VIEW_DIST; dx <= VIEW_DIST; dx++) {
+        const gcx = cx + dx;
+        const gcz = cz + dz;
+        if (gcx < 0 || gcx >= CHUNKS_X || gcz < 0 || gcz >= CHUNKS_Z) continue;
+        const idx = gcz * CHUNKS_X + gcx;
+        newLoaded.add(idx);
+
+        // Build mesh if not already loaded
+        if (!this.loadedSet.has(idx)) {
+          this.rebuildChunk(gcx, gcz);
+        }
+      }
+    }
+
+    // Dispose meshes that left view distance
+    for (const idx of this.loadedSet) {
+      if (!newLoaded.has(idx)) {
+        const mesh = this.chunkMeshes[idx];
+        if (mesh) {
+          this.scene.remove(mesh);
+          mesh.geometry.dispose();
+          this.chunkMeshes[idx] = null;
+        }
+      }
+    }
+
+    this.loadedSet = newLoaded;
+  }
+
+  /** Rebuild only dirty chunks that are within view distance (call each frame). */
   rebuildDirty(): void {
     let rebuilt = 0;
-    for (let i = 0; i < this.world.chunks.length; i++) {
+    for (const idx of this.loadedSet) {
       if (rebuilt >= MAX_REBUILDS_PER_FRAME) break;
-      if (this.world.chunks[i].dirty) {
-        const cx = i % CHUNKS_X;
-        const cz = Math.floor(i / CHUNKS_X);
-        this.rebuildChunk(cx, cz);
+      if (this.world.chunks[idx].dirty) {
+        const gcx = idx % CHUNKS_X;
+        const gcz = Math.floor(idx / CHUNKS_X);
+        this.rebuildChunk(gcx, gcz);
         rebuilt++;
       }
     }
@@ -69,6 +114,7 @@ export class VoxelRenderer {
     }
 
     chunk.dirty = false;
+    this.loadedSet.add(idx);
   }
 
   dispose(): void {
@@ -79,6 +125,7 @@ export class VoxelRenderer {
       }
     }
     this.chunkMeshes.fill(null);
+    this.loadedSet.clear();
     this.material.dispose();
   }
 }

@@ -87,46 +87,46 @@ export function createDefaultGenome(): CreatureGenome {
     brainTaus.push(randFloat(lobe.tauMin, lobe.tauMax));
   }
 
-  // 56-neuron architecture: Drive(0-3), Sense(4-19), Concept(20-35), Planning(36-43), Decision(44-55)
+  // 60-neuron architecture: Drive(0-3), Sense(4-23), Concept(24-39), Planning(40-47), Decision(48-59)
   const connections: { from: number; to: number; weight: number }[] = [];
   // Drive → Concept
   for (let d = 0; d < 4; d++)
-    for (let c = 20; c < 36; c++)
+    for (let c = 24; c < 40; c++)
       if (Math.random() < 0.5)
         connections.push({ from: d, to: c, weight: randFloat(-0.3, 0.3) });
   // Sense → Concept
-  for (let s = 4; s < 20; s++)
-    for (let c = 20; c < 36; c++)
+  for (let s = 4; s < 24; s++)
+    for (let c = 24; c < 40; c++)
       if (Math.random() < 0.35)
         connections.push({ from: s, to: c, weight: randFloat(-0.2, 0.3) });
   // Concept → Planning
-  for (let c = 20; c < 36; c++)
-    for (let p = 36; p < 44; p++)
+  for (let c = 24; c < 40; c++)
+    for (let p = 40; p < 48; p++)
       if (Math.random() < 0.3)
         connections.push({ from: c, to: p, weight: randFloat(-0.3, 0.3) });
   // Drive → Planning
   for (let d = 0; d < 4; d++)
-    for (let p = 36; p < 44; p++)
+    for (let p = 40; p < 48; p++)
       if (Math.random() < 0.4)
         connections.push({ from: d, to: p, weight: randFloat(-0.3, 0.3) });
   // Planning → Decision
-  for (let p = 36; p < 44; p++)
-    for (let d = 44; d < 56; d++)
+  for (let p = 40; p < 48; p++)
+    for (let d = 48; d < 60; d++)
       if (Math.random() < 0.35)
         connections.push({ from: p, to: d, weight: randFloat(-0.3, 0.3) });
   // Concept → Decision (direct path too)
-  for (let c = 20; c < 36; c++)
-    for (let d = 44; d < 56; d++)
+  for (let c = 24; c < 40; c++)
+    for (let d = 48; d < 60; d++)
       if (Math.random() < 0.2)
         connections.push({ from: c, to: d, weight: randFloat(-0.3, 0.3) });
   // Concept recurrent
-  for (let i = 20; i < 36; i++)
-    for (let j = 20; j < 36; j++)
+  for (let i = 24; i < 40; i++)
+    for (let j = 24; j < 40; j++)
       if (i !== j && Math.random() < 0.12)
         connections.push({ from: i, to: j, weight: randFloat(-0.1, 0.1) });
   // Planning recurrent
-  for (let i = 36; i < 44; i++)
-    for (let j = 36; j < 44; j++)
+  for (let i = 40; i < 48; i++)
+    for (let j = 40; j < 48; j++)
       if (i !== j && Math.random() < 0.15)
         connections.push({ from: i, to: j, weight: randFloat(-0.1, 0.1) });
 

@@ -13,6 +13,7 @@ import { clamp, distSq } from '../utils/Math';
 import type { VoxelWorld } from '../voxel/VoxelWorld';
 import { Block, BLOCK_PROPS } from '../voxel/BlockTypes';
 import { BLOCK_SIZE } from '../voxel/VoxelWorld';
+import { inBabelZone } from '../world/BabelZone';
 
 const GATHER_ENERGY_COST = 0.0002;
 
@@ -51,6 +52,14 @@ export class GatheringSystem extends System {
       if (!biochem || !genome) {
         inv.gatherTarget = -1;
         inv.gatherProgress = 0;
+        continue;
+      }
+
+      // Skip gathering in Babel exclusion zone
+      if (inBabelZone(transform.x, transform.z)) {
+        inv.gatherTarget = -1;
+        inv.gatherProgress = 0;
+        mineStates.delete(id);
         continue;
       }
 

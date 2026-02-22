@@ -10,6 +10,8 @@ export const enum GoalType {
   Defend = 6,
   Trade = 7,
   Farm = 8,
+  Migrate = 9,
+  Settle = 10,
 }
 
 export interface GoalData {

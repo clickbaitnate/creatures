@@ -37,7 +37,9 @@ import { creatureName } from './world/NameGenerator';
 import { SpeechBubbleManager } from './ui/SpeechBubbles';
 import { ChemId } from './biochemistry/ChemicalRegistry';
 import { randFloat } from './utils/Math';
-import { createSeasonState, SEASON_NAMES } from './world/Seasons';
+import { createSeasonState, updateSeason, SEASON_NAMES } from './world/Seasons';
+import { MemoryStore, createMemory, MemoryType, MEMORY_SLOTS } from './components/Memory';
+import { MemorySystem } from './systems/MemorySystem';
 import { InventoryStore, createInventory, addItem, ITEM_NAMES, ItemType } from './components/Inventory';
 import { GatheringSystem } from './systems/GatheringSystem';
 import { CraftingSystem } from './systems/CraftingSystem';
@@ -71,7 +73,7 @@ import { Block } from './voxel/BlockTypes';
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB);
-scene.fog = new THREE.FogExp2(0x87CEEB, 0.008);
+scene.fog = new THREE.FogExp2(0x87CEEB, 0.005);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
 camera.position.set(0, 40, 60);
@@ -91,10 +93,10 @@ const sunLight = new THREE.DirectionalLight(0xffe8cc, 1.3);
 sunLight.position.set(30, 50, 20);
 sunLight.castShadow = true;
 sunLight.shadow.mapSize.set(2048, 2048);
-sunLight.shadow.camera.left = -80;
-sunLight.shadow.camera.right = 80;
-sunLight.shadow.camera.top = 80;
-sunLight.shadow.camera.bottom = -80;
+sunLight.shadow.camera.left = -150;
+sunLight.shadow.camera.right = 150;
+sunLight.shadow.camera.top = 150;
+sunLight.shadow.camera.bottom = -150;
 scene.add(sunLight);
 
 // ── Voxel World ──────────────────────────────────────────────
@@ -239,6 +241,7 @@ world.registerStorage(ExpressionStore as any);
 world.registerStorage(InventoryStore as any);
 world.registerStorage(GoalStore as any);
 world.registerStorage(ZealotryStore as any);
+world.registerStorage(MemoryStore as any);
 
 const hierarchySystem = new HierarchySystem();
 hierarchySystem.factionManager = factionManager;
@@ -247,6 +250,7 @@ const socialSystem = new SocialSystem();
 socialSystem.factionManager = factionManager;
 socialSystem.hierarchySystem = hierarchySystem;
 socialSystem.politicsSystem = politicsSystem;
+socialSystem.seasonState = seasonState;
 
 const reproSystem = new ReproductionSystem();
 reproSystem.scene = scene;
@@ -262,6 +266,16 @@ sensorySystem.voxelWorld = voxelWorld;
 sensorySystem.factionManager = factionManager;
 sensorySystem.critterManager = critterManager;
 
+const brainSystem = new BrainSystem();
+brainSystem.seasonState = seasonState;
+brainSystem.voxelWorld = voxelWorld;
+
+const instinctSystem = new InstinctSystem();
+instinctSystem.seasonState = seasonState;
+
+const biochemistrySystem = new BiochemistrySystem();
+biochemistrySystem.seasonState = seasonState;
+
 const motorSystem = new MotorSystem();
 motorSystem.voxelWorld = voxelWorld;
 
@@ -274,11 +288,14 @@ const huntingSystem = new HuntingSystem();
 huntingSystem.critterManager = critterManager;
 
 // No ResourceGridSystem — voxel world replaces it
+const memorySystem = new MemorySystem();
 world.addSystem(sensorySystem);              // 10
-world.addSystem(new BrainSystem());          // 20
+world.addSystem(memorySystem);               // 11
+world.addSystem(new ExpressionSystem());     // 12 (emotions before instincts)
+world.addSystem(brainSystem);                // 20
 world.addSystem(new GoalSystem());           // 22
-world.addSystem(new InstinctSystem());       // 25
-world.addSystem(new BiochemistrySystem());   // 30
+world.addSystem(instinctSystem);             // 25
+world.addSystem(biochemistrySystem);         // 30
 world.addSystem(new MetabolismSystem());     // 35
 world.addSystem(religionSystem);             // 38
 world.addSystem(hierarchySystem);            // 40
@@ -292,7 +309,6 @@ world.addSystem(reproSystem);                // 60
 world.addSystem(new CraftingSystem());        // 63
 world.addSystem(constructionSystem);         // 64
 world.addSystem(buildingSystem);             // 65
-world.addSystem(new ExpressionSystem());     // 92
 world.addSystem(new ShaderSystem());         // 95
 world.addSystem(new AnimationSystem());      // 96
 world.addSystem(new RenderSystem());         // 100
@@ -324,6 +340,7 @@ function spawnCreature(genome: CreatureGenome, x: number, z: number): number {
   world.addComponent(id, InventoryStore, createInventory());
   world.addComponent(id, GoalStore, createGoal());
   world.addComponent(id, ZealotryStore, createZealotry());
+  world.addComponent(id, MemoryStore, createMemory());
 
   // Faction assignment
   const faction = factionManager.assignFaction(id, genome);
@@ -408,7 +425,7 @@ renderer.domElement.addEventListener('mousemove', (e) => {
 renderer.domElement.addEventListener('mouseup', () => { isDragging = false; });
 renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 renderer.domElement.addEventListener('wheel', (e) => {
-  cameraDist = Math.max(5, Math.min(150, cameraDist + e.deltaY * 0.05));
+  cameraDist = Math.max(5, Math.min(250, cameraDist + e.deltaY * 0.05));
 });
 
 function updateCamera(): void {
@@ -520,6 +537,20 @@ function updateHUD(): void {
         text += `\nInv: ${items || 'empty'}`;
       }
       text += `\nRes:${social.resources} ${activityName(social.activity)}`;
+      const expr = ExpressionStore.get(selectedId);
+      if (expr) {
+        const moodIcon = expr.mood > 0.3 ? '😊' : expr.mood < -0.3 ? '😟' : '😐';
+        text += `\n${moodIcon} Mood:${expr.mood.toFixed(2)} [${expr.dominant}]`;
+      }
+      const mem = MemoryStore.get(selectedId);
+      if (mem) {
+        const activeMemories = mem.entries.filter(e => e.type !== 0);
+        text += `\nMemories: ${activeMemories.length}/${MEMORY_SLOTS}`;
+        const MEMORY_TYPE_NAMES = ['', '🍎Food', '⚠️Danger', '😡Hostile', '😊Friend', '🏠Home', '⛏️Resource', '🏗️Shelter'];
+        for (const m of activeMemories) {
+          text += `\n  ${MEMORY_TYPE_NAMES[m.type]} str:${m.strength.toFixed(2)}`;
+        }
+      }
     }
   } else {
     text += `\n\nClick creature to inspect`;
@@ -548,28 +579,58 @@ function activityName(a: Activity): string {
   return ['💤', '🚶', '🍽️', '💬', '⚔️', '💕', '🔨', '⛏️'][a] ?? '?';
 }
 
-// ── Initialization: Spawn 30 creatures near tower base ──────
+// ── Initialization: Spawn 30 creatures in 4 dispersed groups ──────
 
-// Ensure "Builders" faction exists by spawning all with high buildAffinity
-for (let i = 0; i < 30; i++) {
-  const genome = createDefaultGenome();
-  // Boost build traits for Babel builders
-  genome.buildAffinity = 0.7 + Math.random() * 0.3;
-  genome.creativity = 0.5 + Math.random() * 0.3;
-  genome.gatherAffinity = 0.4 + Math.random() * 0.3;
+// Group definitions: center, personality bias, count
+const spawnGroups: { cx: number; cz: number; count: number; bias: (g: any) => void }[] = [
+  // Group 1: Builders near tower center (8 creatures)
+  { cx: 0, cz: 0, count: 8, bias(g) {
+    g.buildAffinity = 0.7 + Math.random() * 0.3;
+    g.creativity = 0.5 + Math.random() * 0.3;
+    g.gatherAffinity = 0.4 + Math.random() * 0.3;
+    g.loyalty = 0.5 + Math.random() * 0.4;
+  }},
+  // Group 2: Gatherers in NE quadrant (8 creatures)
+  { cx: 25, cz: 25, count: 8, bias(g) {
+    g.gatherAffinity = 0.6 + Math.random() * 0.3;
+    g.sociability = 0.5 + Math.random() * 0.3;
+    g.curiosity = 0.3 + Math.random() * 0.3;
+    g.buildAffinity = 0.2 + Math.random() * 0.3;
+  }},
+  // Group 3: Hunters in SW quadrant (7 creatures)
+  { cx: -25, cz: -25, count: 7, bias(g) {
+    g.huntAffinity = 0.6 + Math.random() * 0.3;
+    g.aggression = 0.5 + Math.random() * 0.3;
+    g.speed = 2.5 + Math.random() * 1.0;
+    g.buildAffinity = 0.1 + Math.random() * 0.3;
+  }},
+  // Group 4: Explorers/mixed in SE quadrant (7 creatures)
+  { cx: 25, cz: -25, count: 7, bias(g) {
+    g.curiosity = 0.6 + Math.random() * 0.3;
+    g.creativity = 0.3 + Math.random() * 0.4;
+    g.sociability = 0.4 + Math.random() * 0.3;
+    g.buildAffinity = 0.2 + Math.random() * 0.4;
+  }},
+];
 
-  // Spawn near tower base (within ~8 world units of center)
-  const angle = (i / 30) * Math.PI * 2;
-  const dist = 3 + Math.random() * 5;
-  const x = Math.cos(angle) * dist;
-  const z = Math.sin(angle) * dist;
+for (const group of spawnGroups) {
+  for (let i = 0; i < group.count; i++) {
+    const genome = createDefaultGenome();
+    group.bias(genome);
 
-  const id = spawnCreature(genome, x, z);
+    // Spawn within ~5 units of group center
+    const angle = (i / group.count) * Math.PI * 2;
+    const dist = 2 + Math.random() * 3;
+    const x = group.cx + Math.cos(angle) * dist;
+    const z = group.cz + Math.sin(angle) * dist;
 
-  // Give starting inventory for building
-  const inv = InventoryStore.get(id)!;
-  addItem(inv, ItemType.RawStone, 5);
-  addItem(inv, ItemType.RawWood, 3);
+    const id = spawnCreature(genome, x, z);
+
+    // Give starting inventory for building
+    const inv = InventoryStore.get(id)!;
+    addItem(inv, ItemType.RawStone, 5);
+    addItem(inv, ItemType.RawWood, 3);
+  }
 }
 
 // ── Simulation Loop ─────────────────────────────────────────
@@ -589,10 +650,14 @@ function animate(): void {
   const time = performance.now() * 0.001;
 
   zodiac.advance();
+  updateSeason(seasonState);
   world.update(SIM_DT);
   godMode.update(world, camera);
   dashboard.selectedCreatureId = selectedId;
   dashboard.tick(world, zodiac.tick);
+
+  // Update voxel view-distance loading based on camera target
+  voxelRenderer.updateCamera(cameraTarget.x, cameraTarget.z);
 
   // Rebuild dirty voxel chunks (block changes from mining/construction)
   voxelRenderer.rebuildDirty();

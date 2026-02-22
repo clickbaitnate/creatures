@@ -10,6 +10,11 @@ export interface ExpressionData {
   tiredness: number;
   pain: number;
 
+  // Computed mood: -1 (miserable) to +1 (elated)
+  mood: number;
+  // Dominant emotion name for behavior lookups
+  dominant: string;
+
   // Cached mesh refs (populated on first access)
   meshRefs: ExpressionMeshRefs | null;
 }
@@ -42,6 +47,8 @@ export function createExpression(): ExpressionData {
     curiosity: 0,
     tiredness: 0,
     pain: 0,
+    mood: 0,
+    dominant: 'neutral',
     meshRefs: null,
   };
 }

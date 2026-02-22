@@ -5,10 +5,13 @@ import { GenomeStore } from '../components/Genome';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { ChemId, CHEMICALS } from '../biochemistry/ChemicalRegistry';
 import { clamp } from '../utils/Math';
+import type { SeasonState } from '../world/Seasons';
 
 export class BiochemistrySystem extends System {
   readonly query = BiochemStore.bit | GenomeStore.bit;
   readonly priority = 30;
+
+  seasonState: SeasonState | null = null;
 
   update(world: World, _dt: number): void {
     const entities = world.query(this.query);
@@ -45,8 +48,9 @@ export class BiochemistrySystem extends System {
       // Tiredness rises when ATP is low
       chemicals[ChemId.Tiredness] = clamp(1.0 - chemicals[ChemId.ATP] * 3.0, 0, 1);
 
-      // Base metabolism: very gentle energy drain
-      chemicals[ChemId.Energy] -= 0.00008;
+      // Base metabolism: very gentle energy drain, amplified by season
+      const seasonDrain = this.seasonState?.drainMult ?? 1.0;
+      chemicals[ChemId.Energy] -= 0.00008 * seasonDrain;
 
       // LifeForce only degrades during serious starvation (lower threshold)
       if (chemicals[ChemId.Energy] < 0.03 && chemicals[ChemId.Glucose] < 0.02) {

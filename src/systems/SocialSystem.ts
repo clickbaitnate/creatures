@@ -16,6 +16,9 @@ import {
   EMOTIONS, NEEDS, ACTIVITIES, SOCIAL_SPEECH, SYMBOLS,
   emotionEmoji, pick,
 } from '../world/EmojiVocabulary';
+import { MemoryStore, MemoryType } from '../components/Memory';
+import type { SeasonState } from '../world/Seasons';
+import { Season } from '../world/Seasons';
 
 const TALK_RANGE_SQ = 4 * 4;
 const FIGHT_RANGE_SQ = 2.5 * 2.5;
@@ -32,6 +35,7 @@ export class SocialSystem extends System {
   factionManager: FactionManager | null = null;
   hierarchySystem: HierarchySystem | null = null;
   politicsSystem: PoliticsSystem | null = null;
+  seasonState: SeasonState | null = null;
   private talkTimers = new Map<number, number>();
   private challengeTimers = new Map<number, number>();
   private clanCheckTimer = 0;
@@ -102,6 +106,17 @@ export class SocialSystem extends System {
       const myFaction = social.factionId;
       const theirFaction = otherSocial.factionId;
       const relation = this.factionManager?.getRelation(myFaction, theirFaction) ?? 0;
+
+      // Emotional contagion: nearby creatures' moods blend slightly
+      if (dsq < TALK_RANGE_SQ) {
+        const otherExpr = ExpressionStore.get(otherId);
+        if (expr && otherExpr) {
+          const blend = 0.02; // subtle mood transfer
+          expr.fear = clamp(expr.fear + (otherExpr.fear - expr.fear) * blend, 0, 1);
+          expr.happiness = clamp(expr.happiness + (otherExpr.happiness - expr.happiness) * blend, 0, 1);
+          expr.anger = clamp(expr.anger + (otherExpr.anger - expr.anger) * blend, 0, 1);
+        }
+      }
 
       // Close enough to talk?
       if (dsq < TALK_RANGE_SQ) {
@@ -272,6 +287,46 @@ export class SocialSystem extends System {
           social.speechEmoji = pick(EMOTIONS.curious);
           social.speechTimer = 30;
           this.talkTimers.set(id, TALK_COOLDOWN * 2);
+        }
+      }
+
+      // Seasonal speech: creatures comment on weather
+      if (this.seasonState && Math.random() < 0.003) {
+        const season = this.seasonState.season;
+        if (season === Season.Winter) {
+          social.speechEmoji = '🥶';
+          social.speechTimer = 30;
+          this.talkTimers.set(id, TALK_COOLDOWN * 2);
+        } else if (season === Season.Summer) {
+          social.speechEmoji = '☀️';
+          social.speechTimer = 25;
+          this.talkTimers.set(id, TALK_COOLDOWN * 3);
+        }
+      }
+
+      // Memory-based hostile warnings: warn friends about remembered hostiles
+      const memory = MemoryStore.get(id);
+      if (memory && senses?.creatureVisible && senses.nearestCreatureId >= 0) {
+        for (const mem of memory.entries) {
+          if (mem.type === MemoryType.HostileIndividual && mem.entityId === senses.nearestCreatureId && mem.strength > 0.3) {
+            if (Math.random() < 0.02) {
+              social.speechEmoji = pick(SOCIAL_SPEECH.warning);
+              social.speechTimer = 35;
+              this.talkTimers.set(id, TALK_COOLDOWN);
+            }
+            break;
+          }
+        }
+        // Remembered friends boost happiness in context speech
+        for (const mem of memory.entries) {
+          if (mem.type === MemoryType.FriendlyIndividual && mem.entityId === senses.nearestCreatureId && mem.strength > 0.3) {
+            if (Math.random() < 0.01) {
+              social.speechEmoji = pick(EMOTIONS.joy);
+              social.speechTimer = 30;
+              this.talkTimers.set(id, TALK_COOLDOWN);
+            }
+            break;
+          }
         }
       }
 

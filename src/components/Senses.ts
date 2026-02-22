@@ -47,6 +47,10 @@ export interface SensesData {
   nearestPreyType: number;
   preyVisible: boolean;
   nearestPreyIndex: number;
+
+  // Crowd sensing
+  crowdDensity: number;        // 0-1, capped at 8 neighbors within 12 units
+  nearbyFactionCount: number;  // same-faction creatures within 12 units
 }
 
 export function createSenses(): SensesData {
@@ -89,6 +93,9 @@ export function createSenses(): SensesData {
     nearestPreyType: -1,
     preyVisible: false,
     nearestPreyIndex: -1,
+
+    crowdDensity: 0,
+    nearbyFactionCount: 0,
   };
 }
 

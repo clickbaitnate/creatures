@@ -6,8 +6,10 @@ import { GenomeStore } from '../components/Genome';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { InventoryStore, removeItem, ItemType } from '../components/Inventory';
 import { SocialStore, Activity } from '../components/Social';
+import { TransformStore } from '../components/Transform';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
 import { clamp } from '../utils/Math';
+import { inBabelZone } from '../world/BabelZone';
 
 // Glucose values for raw food items
 const FOOD_GLUCOSE: Partial<Record<ItemType, number>> = {
@@ -40,6 +42,10 @@ export class EatingSystem extends System {
 
       const motor = MotorStore.get(id)!;
       const { chemicals } = BiochemStore.get(id)!;
+
+      // Skip eating in Babel exclusion zone (forces leaving when hungry)
+      const transform = TransformStore.get(id);
+      if (transform && inBabelZone(transform.x, transform.z)) continue;
 
       // Auto-eat when hungry (don't require brain signal)
       const hungry = chemicals[ChemId.Hunger] > 0.3;

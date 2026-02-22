@@ -46,7 +46,7 @@ function initMeshRefs(group: THREE.Group): ExpressionMeshRefs | null {
 
 export class ExpressionSystem extends System {
   readonly query = ExpressionStore.bit | BiochemStore.bit | GenomeStore.bit | RenderableStore.bit | LifecycleStore.bit;
-  readonly priority = 92;
+  readonly priority = 12; // Before InstinctSystem (25) so emotions inform behavior
 
   update(world: World, _dt: number): void {
     const entities = world.query(this.query);
@@ -77,6 +77,28 @@ export class ExpressionSystem extends System {
       expr.curiosity = lerp(expr.curiosity, targetCuriosity, LERP_SPEED);
       expr.tiredness = lerp(expr.tiredness, targetTiredness, LERP_SPEED);
       expr.pain = lerp(expr.pain, targetPain, LERP_SPEED);
+
+      // Compute mood: positive emotions minus negative
+      expr.mood = clamp(
+        (expr.happiness + expr.curiosity * 0.5) - (expr.fear + expr.anger + expr.pain + expr.tiredness * 0.5) * 0.5,
+        -1, 1,
+      );
+
+      // Find dominant emotion
+      const emotions = [
+        { name: 'happy', val: expr.happiness },
+        { name: 'fear', val: expr.fear },
+        { name: 'anger', val: expr.anger },
+        { name: 'curious', val: expr.curiosity },
+        { name: 'tired', val: expr.tiredness },
+        { name: 'pain', val: expr.pain },
+      ];
+      let maxVal = 0;
+      let maxName = 'neutral';
+      for (const e of emotions) {
+        if (e.val > maxVal) { maxVal = e.val; maxName = e.name; }
+      }
+      expr.dominant = maxName;
 
       // Update shader emotion uniform
       const shaderState = ShaderStateStore.get(id);

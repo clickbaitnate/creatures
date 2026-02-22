@@ -1,12 +1,16 @@
 // Territory grid: 25x25 (same as resource grid), each cell owned by factionId or -1
 // Recalculated every 100 ticks by scanning creature positions and building locations
 
-import { GRID_SIZE, CELL_SIZE, GRID_CELLS } from './ResourceGrid';
 import { TransformStore } from '../components/Transform';
 import { SocialStore } from '../components/Social';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { BuildingStore } from '../components/Building';
 import type { World } from '../ecs/World';
+
+// Territory uses its own grid covering the 200×200 world (WORLD_HALF=100)
+const GRID_SIZE = 100;
+const CELL_SIZE = 2;
+const GRID_CELLS = GRID_SIZE * GRID_SIZE;
 
 const RECALC_INTERVAL = 100;
 const CLAIM_RADIUS = 5; // units

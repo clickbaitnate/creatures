@@ -15,10 +15,10 @@ import { WORLD_HALF as VOXEL_WORLD_HALF } from '../voxel/VoxelWorld';
 
 const WORLD_HALF = 50;
 
-// Decision lobe: neurons 44-55
-// 44=moveForward, 45=turnLeft, 46=turnRight, 47=speedMod,
-// 48=eat, 49=gather, 50=hunt, 51=build,
-// 52=craft, 53=deposit, 54=trade, 55=patrol
+// Decision lobe: neurons 48-59
+// 48=moveForward, 49=turnLeft, 50=turnRight, 51=speedMod,
+// 52=eat, 53=gather, 54=hunt, 55=build,
+// 56=craft, 57=deposit, 58=trade, 59=patrol
 
 export class MotorSystem extends System {
   readonly query = TransformStore.bit | BrainStore.bit | MotorStore.bit | GenomeStore.bit;
@@ -39,15 +39,15 @@ export class MotorSystem extends System {
       const { genome } = GenomeStore.get(id)!;
       const biochem = BiochemStore.get(id);
 
-      // Read Decision lobe outputs (neurons 44-55)
-      const moveForward = brain.outputs[44];
-      const turnLeft = brain.outputs[45];
-      const turnRight = brain.outputs[46];
-      const speedMod = brain.outputs[47];
-      const eat = brain.outputs[48];
-      const gather = brain.outputs[49];
-      const hunt = brain.outputs[50];
-      const build = brain.outputs[51];
+      // Read Decision lobe outputs (neurons 48-59)
+      const moveForward = brain.outputs[48];
+      const turnLeft = brain.outputs[49];
+      const turnRight = brain.outputs[50];
+      const speedMod = brain.outputs[51];
+      const eat = brain.outputs[52];
+      const gather = brain.outputs[53];
+      const hunt = brain.outputs[54];
+      const build = brain.outputs[55];
 
       motor.forward = clamp(moveForward, 0, 2);
       motor.turnLeft = clamp(turnLeft, 0, 2);
@@ -66,7 +66,22 @@ export class MotorSystem extends System {
       const sizeSpeedPenalty = 1.0 / (0.5 + genome.bodyScale * 0.5);
       const speed = motor.forward * genome.speed * (0.5 + speedMod * 0.5) * sizeSpeedPenalty;
       const energyFactor = biochem ? clamp(biochem.chemicals[ChemId.Energy] * 4, 0.3, 1.0) : 1.0;
-      const moveSpeed = speed * energyFactor * dt;
+      let moveSpeed = speed * energyFactor * dt;
+
+      // Slope movement cost: uphill is expensive, downhill is slightly faster
+      if (this.voxelWorld) {
+        const aheadX = transform.x + Math.sin(transform.rotation) * 0.5;
+        const aheadZ = transform.z + Math.cos(transform.rotation) * 0.5;
+        const aheadY = this.voxelWorld.getHeightWorld(aheadX, aheadZ);
+        const slope = (aheadY - transform.y) / 0.5;
+        if (slope > 0) {
+          // Uphill: reduce speed proportionally (steep = very slow)
+          moveSpeed *= clamp(1.0 - slope * 0.6, 0.2, 1.0);
+        } else {
+          // Downhill: slight speed boost
+          moveSpeed *= clamp(1.0 - slope * 0.15, 1.0, 1.3);
+        }
+      }
 
       transform.x += Math.sin(transform.rotation) * moveSpeed;
       transform.z += Math.cos(transform.rotation) * moveSpeed;
@@ -96,8 +111,17 @@ export class MotorSystem extends System {
       }
 
       // Movement costs energy — proportional to size (bigger burns more)
+      // Uphill costs extra energy
       if (biochem && moveSpeed > 0.005) {
-        const cost = genome.muscleRate * moveSpeed * 0.1 * genome.bodyScale;
+        let cost = genome.muscleRate * moveSpeed * 0.1 * genome.bodyScale;
+        // Slope surcharge
+        if (this.voxelWorld) {
+          const aheadX = transform.x + Math.sin(transform.rotation) * 0.5;
+          const aheadZ = transform.z + Math.cos(transform.rotation) * 0.5;
+          const aheadY = this.voxelWorld.getHeightWorld(aheadX, aheadZ);
+          const slope = (aheadY - transform.y) / 0.5;
+          if (slope > 0) cost *= 1.0 + slope * 0.5;
+        }
         biochem.chemicals[ChemId.ATP] = Math.max(0, biochem.chemicals[ChemId.ATP] - cost);
       }
     }

@@ -1,9 +1,9 @@
 import { clamp, sigmoid, tanhFn, relu } from '../utils/Math';
 
-// Expanded brain: 64 neurons across 5 lobes
-// Drive(4) | Sense(16) | Concept(16) | Planning(8) | Decision(12) [was 8]
+// Expanded brain: 60 neurons across 5 lobes
+// Drive(4) | Sense(20) | Concept(16) | Planning(8) | Decision(12)
 
-export const NEURON_COUNT = 56;
+export const NEURON_COUNT = 60;
 
 export const enum LobeId {
   Drive    = 0,
@@ -25,10 +25,10 @@ export interface LobeInfo {
 
 export const LOBES: LobeInfo[] = [
   { id: LobeId.Drive,    name: 'Drive',    offset: 0,  size: 4,  activation: tanhFn,  tauMin: 5, tauMax: 10 },
-  { id: LobeId.Sense,    name: 'Sense',    offset: 4,  size: 16, activation: sigmoid, tauMin: 1, tauMax: 2 },
-  { id: LobeId.Concept,  name: 'Concept',  offset: 20, size: 16, activation: sigmoid, tauMin: 3, tauMax: 6 },
-  { id: LobeId.Planning, name: 'Planning', offset: 36, size: 8,  activation: sigmoid, tauMin: 4, tauMax: 8 },
-  { id: LobeId.Decision, name: 'Decision', offset: 44, size: 12, activation: relu,    tauMin: 1, tauMax: 2 },
+  { id: LobeId.Sense,    name: 'Sense',    offset: 4,  size: 20, activation: sigmoid, tauMin: 1, tauMax: 2 },
+  { id: LobeId.Concept,  name: 'Concept',  offset: 24, size: 16, activation: sigmoid, tauMin: 3, tauMax: 6 },
+  { id: LobeId.Planning, name: 'Planning', offset: 40, size: 8,  activation: sigmoid, tauMin: 4, tauMax: 8 },
+  { id: LobeId.Decision, name: 'Decision', offset: 48, size: 12, activation: relu,    tauMin: 1, tauMax: 2 },
 ];
 
 export function lobeOf(neuronIndex: number): LobeInfo {
@@ -119,7 +119,7 @@ export function applyLearning(brain: BrainState, reward: number, punishment: num
     const target = connTo[c];
 
     // Concept, Planning and Decision connections: reward-modulated
-    if (target >= 20) {
+    if (target >= 24) {
       const mod = reward - punishment;
       connWeights[c] += lr * pre * post * mod;
     } else {

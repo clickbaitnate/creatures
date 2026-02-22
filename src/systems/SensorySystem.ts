@@ -24,6 +24,9 @@ export const FoodStore = new ComponentStorage<FoodData>();
 
 const SIGHT_RANGE = 20;
 const SIGHT_RANGE_SQ = SIGHT_RANGE * SIGHT_RANGE;
+const CROWD_RANGE = 12;
+const CROWD_RANGE_SQ = CROWD_RANGE * CROWD_RANGE;
+const CROWD_CAP = 8; // 8 neighbors = density 1.0
 const RESOURCE_SCAN_RADIUS = 5; // grid cells to scan around creature
 
 export class SensorySystem extends System {
@@ -48,11 +51,13 @@ export class SensorySystem extends System {
       const social = SocialStore.get(id);
       const myFaction = social?.factionId ?? -1;
 
-      // ── Nearest creature ───────────────────────────
+      // ── Nearest creature + crowd density ───────────────────────────
       let bestCreatureDSq = Infinity;
       let bestCreatureId = -1;
       let bestCX = 0;
       let bestCZ = 0;
+      let nearbyTotal = 0;
+      let nearbyFaction = 0;
 
       for (const cid of creatures) {
         if (cid === id) continue;
@@ -66,7 +71,17 @@ export class SensorySystem extends System {
           bestCX = ct.x;
           bestCZ = ct.z;
         }
+        // Crowd density: count creatures within 12 units
+        if (dsq < CROWD_RANGE_SQ) {
+          nearbyTotal++;
+          const otherSocial = SocialStore.get(cid);
+          if (otherSocial && otherSocial.factionId === myFaction) {
+            nearbyFaction++;
+          }
+        }
       }
+      senses.crowdDensity = Math.min(1, nearbyTotal / CROWD_CAP);
+      senses.nearbyFactionCount = nearbyFaction;
 
       if (bestCreatureId >= 0) {
         senses.creatureVisible = true;
