@@ -21,11 +21,11 @@ export class RenderSystem extends System {
       const { object } = RenderableStore.get(id)!;
       const lifecycle = LifecycleStore.get(id);
 
-      // For creature groups: set position but keep the baked-in Y offset
-      const baseY = object.userData.baseY ?? transform.y;
-      if (object.userData.baseY === undefined) {
-        object.userData.baseY = object.position.y || transform.y;
+      // Cache the mesh's baked-in foot offset (set once by MeshBuilder)
+      if (object.userData.meshYOffset === undefined) {
+        object.userData.meshYOffset = object.position.y || 0;
       }
+      const meshYOffset = object.userData.meshYOffset as number;
 
       object.position.x = transform.x;
       object.position.z = transform.z;
@@ -37,9 +37,11 @@ export class RenderSystem extends System {
         continue;
       }
 
-      // Subtle bobbing animation for alive creatures
+      // Place creature on terrain + mesh offset + subtle bobbing
       if (lifecycle && lifecycle.stage === LifeStage.Alive) {
-        object.position.y = baseY + Math.sin(time * 3 + id * 1.7) * 0.03;
+        object.position.y = transform.y + meshYOffset + Math.sin(time * 3 + id * 1.7) * 0.03;
+      } else {
+        object.position.y = transform.y + meshYOffset;
       }
     }
 

@@ -12,6 +12,41 @@ export interface SensesData {
   // What entity is nearest food / creature
   nearestFoodId: number;
   nearestCreatureId: number;
+
+  // Resource grid tile sensing
+  nearestResourceAngle: number;
+  nearestResourceDist: number;
+  nearestResourceType: number;
+  nearestResourceAmount: number;
+  nearestResourceCell: number;
+  resourceVisible: boolean;
+
+  // Tile underfoot
+  currentBiome: number;
+  currentResource: number;
+  currentResourceAmount: number;
+  currentCell: number;
+
+  // Building sensing
+  nearestBuildingAngle: number;
+  nearestBuildingDist: number;
+  nearestBuildingType: number;
+  nearestBuildingFaction: number;
+  buildingVisible: boolean;
+  nearestBuildingId: number;
+
+  // Threat sensing
+  nearestThreatAngle: number;
+  nearestThreatDist: number;
+  threatLevel: number;
+  threatVisible: boolean;
+
+  // Prey sensing
+  nearestPreyAngle: number;
+  nearestPreyDist: number;
+  nearestPreyType: number;
+  preyVisible: boolean;
+  nearestPreyIndex: number;
 }
 
 export function createSenses(): SensesData {
@@ -24,6 +59,36 @@ export function createSenses(): SensesData {
     creatureVisible: false,
     nearestFoodId: -1,
     nearestCreatureId: -1,
+
+    nearestResourceAngle: 0,
+    nearestResourceDist: 1,
+    nearestResourceType: 0,
+    nearestResourceAmount: 0,
+    nearestResourceCell: -1,
+    resourceVisible: false,
+
+    currentBiome: 0,
+    currentResource: 0,
+    currentResourceAmount: 0,
+    currentCell: -1,
+
+    nearestBuildingAngle: 0,
+    nearestBuildingDist: 1,
+    nearestBuildingType: -1,
+    nearestBuildingFaction: -1,
+    buildingVisible: false,
+    nearestBuildingId: -1,
+
+    nearestThreatAngle: 0,
+    nearestThreatDist: 1,
+    threatLevel: 0,
+    threatVisible: false,
+
+    nearestPreyAngle: 0,
+    nearestPreyDist: 1,
+    nearestPreyType: -1,
+    preyVisible: false,
+    nearestPreyIndex: -1,
   };
 }
 

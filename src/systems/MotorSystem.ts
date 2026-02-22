@@ -7,13 +7,24 @@ import { GenomeStore } from '../components/Genome';
 import { BiochemStore } from '../components/Biochemistry';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
+import { SocialStore, Activity } from '../components/Social';
 import { clamp } from '../utils/Math';
+import { terrainY } from '../world/Environment';
+import type { VoxelWorld } from '../voxel/VoxelWorld';
+import { WORLD_HALF as VOXEL_WORLD_HALF } from '../voxel/VoxelWorld';
 
-const WORLD_HALF = 24;
+const WORLD_HALF = 50;
+
+// Decision lobe: neurons 44-55
+// 44=moveForward, 45=turnLeft, 46=turnRight, 47=speedMod,
+// 48=eat, 49=gather, 50=hunt, 51=build,
+// 52=craft, 53=deposit, 54=trade, 55=patrol
 
 export class MotorSystem extends System {
   readonly query = TransformStore.bit | BrainStore.bit | MotorStore.bit | GenomeStore.bit;
   readonly priority = 50;
+
+  voxelWorld: VoxelWorld | null = null;
 
   update(world: World, dt: number): void {
     const entities = world.query(this.query);
@@ -28,21 +39,24 @@ export class MotorSystem extends System {
       const { genome } = GenomeStore.get(id)!;
       const biochem = BiochemStore.get(id);
 
-      // Read Decision lobe outputs (neurons 24-31)
-      const moveForward = brain.outputs[24];
-      const turnLeft = brain.outputs[25];
-      const turnRight = brain.outputs[26];
-      const speedMod = brain.outputs[27];
-      const eat = brain.outputs[28];
-      const _flee = brain.outputs[29];
-      const mate = brain.outputs[30];
-      const _idle = brain.outputs[31];
+      // Read Decision lobe outputs (neurons 44-55)
+      const moveForward = brain.outputs[44];
+      const turnLeft = brain.outputs[45];
+      const turnRight = brain.outputs[46];
+      const speedMod = brain.outputs[47];
+      const eat = brain.outputs[48];
+      const gather = brain.outputs[49];
+      const hunt = brain.outputs[50];
+      const build = brain.outputs[51];
 
       motor.forward = clamp(moveForward, 0, 2);
       motor.turnLeft = clamp(turnLeft, 0, 2);
       motor.turnRight = clamp(turnRight, 0, 2);
       motor.wantEat = eat > 0.5;
-      motor.wantMate = mate > 0.5;
+      // wantMate is driven by InstinctSystem directly — no dedicated neuron
+      motor.wantGather = gather > 0.5;
+      motor.wantHunt = hunt > 0.5;
+      motor.wantBuild = build > 0.5;
 
       // Apply rotation
       const netTurn = (motor.turnRight - motor.turnLeft) * genome.turnRate * dt;
@@ -57,14 +71,28 @@ export class MotorSystem extends System {
       transform.x += Math.sin(transform.rotation) * moveSpeed;
       transform.z += Math.cos(transform.rotation) * moveSpeed;
 
-      // Keep in bounds — bounce off edges
-      if (transform.x < -WORLD_HALF || transform.x > WORLD_HALF) {
-        transform.x = clamp(transform.x, -WORLD_HALF, WORLD_HALF);
+      // Snap to terrain height — use voxel world if available, else fallback to terrainY
+      if (this.voxelWorld) {
+        transform.y = this.voxelWorld.getHeightWorld(transform.x, transform.z);
+      } else {
+        transform.y = terrainY(transform.x, transform.z);
+      }
+
+      // Keep in bounds — use voxel world bounds if available
+      const halfBound = this.voxelWorld ? VOXEL_WORLD_HALF : WORLD_HALF;
+      if (transform.x < -halfBound || transform.x > halfBound) {
+        transform.x = clamp(transform.x, -halfBound, halfBound);
         transform.rotation = Math.PI - transform.rotation;
       }
-      if (transform.z < -WORLD_HALF || transform.z > WORLD_HALF) {
-        transform.z = clamp(transform.z, -WORLD_HALF, WORLD_HALF);
+      if (transform.z < -halfBound || transform.z > halfBound) {
+        transform.z = clamp(transform.z, -halfBound, halfBound);
         transform.rotation = -transform.rotation;
+      }
+
+      // Set walking activity if actually moving
+      const social = SocialStore.get(id);
+      if (social && moveSpeed > 0.01 && social.activity === Activity.Idle) {
+        social.activity = Activity.Walking;
       }
 
       // Movement costs energy — proportional to size (bigger burns more)

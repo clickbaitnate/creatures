@@ -1,20 +1,34 @@
 import { System } from '../ecs/System';
 import type { World } from '../ecs/World';
-import { TransformStore } from '../components/Transform';
 import { MotorStore } from '../components/Motor';
 import { BiochemStore } from '../components/Biochemistry';
 import { GenomeStore } from '../components/Genome';
-import { SensesStore } from '../components/Senses';
-import { RenderableStore } from '../components/Renderable';
 import { LifecycleStore, LifeStage } from '../components/Lifecycle';
-import { FoodStore, FoodType } from './SensorySystem';
+import { InventoryStore, removeItem, ItemType } from '../components/Inventory';
+import { SocialStore, Activity } from '../components/Social';
 import { ChemId } from '../biochemistry/ChemicalRegistry';
-import { distSq, clamp } from '../utils/Math';
+import { clamp } from '../utils/Math';
 
-const EAT_RANGE_SQ = 2.2 * 2.2;
+// Glucose values for raw food items
+const FOOD_GLUCOSE: Partial<Record<ItemType, number>> = {
+  [ItemType.RawBerry]: 0.35,
+  [ItemType.RawGrass]: 0.25,
+  [ItemType.RawRoot]: 0.30,
+  [ItemType.RawMeat]: 0.55,
+  [ItemType.FoodBundle]: 0.50,
+};
+
+// Which foods to try eating, in preference order
+const FOOD_PRIORITY: ItemType[] = [
+  ItemType.FoodBundle,
+  ItemType.RawMeat,
+  ItemType.RawBerry,
+  ItemType.RawRoot,
+  ItemType.RawGrass,
+];
 
 export class EatingSystem extends System {
-  readonly query = MotorStore.bit | BiochemStore.bit | SensesStore.bit | TransformStore.bit | GenomeStore.bit;
+  readonly query = MotorStore.bit | BiochemStore.bit | InventoryStore.bit | GenomeStore.bit;
   readonly priority = 55;
 
   update(world: World, _dt: number): void {
@@ -25,49 +39,49 @@ export class EatingSystem extends System {
       if (lifecycle && lifecycle.stage === LifeStage.Dead) continue;
 
       const motor = MotorStore.get(id)!;
-      if (!motor.wantEat) continue;
-
-      const senses = SensesStore.get(id)!;
-      if (!senses.foodVisible || senses.nearestFoodId < 0) continue;
-
-      const transform = TransformStore.get(id)!;
-      const foodId = senses.nearestFoodId;
-
-      if (!world.has(foodId)) continue;
-
-      const foodTransform = TransformStore.get(foodId);
-      if (!foodTransform) continue;
-
-      if (distSq(transform.x, transform.z, foodTransform.x, foodTransform.z) > EAT_RANGE_SQ) continue;
-
-      const food = FoodStore.get(foodId);
-      if (!food) continue;
-
-      // Dietary efficiency based on genome
-      const { genome } = GenomeStore.get(id)!;
-      let efficiency: number;
-      switch (food.type) {
-        case FoodType.Berry: efficiency = genome.dietBerry; break;
-        case FoodType.Grass: efficiency = genome.dietGrass; break;
-        case FoodType.Root:  efficiency = genome.dietRoot; break;
-        default: efficiency = 0.33;
-      }
-
-      // Bigger creatures extract more energy but efficiency still matters
-      const sizeBonus = 0.7 + genome.bodyScale * 0.3;
-      const energyGained = food.energy * efficiency * sizeBonus;
-
       const { chemicals } = BiochemStore.get(id)!;
-      chemicals[ChemId.Glucose] = clamp(chemicals[ChemId.Glucose] + energyGained, 0, 1);
-      chemicals[ChemId.Reward] = clamp(chemicals[ChemId.Reward] + 0.25 * efficiency, 0, 1);
 
-      // Remove food and its mesh
-      const renderable = RenderableStore.get(foodId);
-      if (renderable) {
-        const parent = renderable.object.parent;
-        if (parent) parent.remove(renderable.object);
+      // Auto-eat when hungry (don't require brain signal)
+      const hungry = chemicals[ChemId.Hunger] > 0.3;
+      if (!motor.wantEat && !hungry) continue;
+
+      const inv = InventoryStore.get(id)!;
+      const { genome } = GenomeStore.get(id)!;
+
+      // Try to eat food from inventory in priority order
+      for (const item of FOOD_PRIORITY) {
+        let hasItem = false;
+        for (const slot of inv.slots) {
+          if (slot.item === item && slot.count > 0) { hasItem = true; break; }
+        }
+        if (!hasItem) continue;
+
+        const glucoseValue = FOOD_GLUCOSE[item] ?? 0.2;
+
+        // Diet efficiency for raw items
+        let efficiency = 1.0;
+        if (item === ItemType.RawBerry) efficiency = genome.dietBerry;
+        else if (item === ItemType.RawGrass) efficiency = genome.dietGrass;
+        else if (item === ItemType.RawRoot) efficiency = genome.dietRoot;
+
+        const sizeBonus = 0.7 + genome.bodyScale * 0.3;
+        const gained = glucoseValue * efficiency * sizeBonus;
+
+        removeItem(inv, item, 1);
+        chemicals[ChemId.Glucose] = clamp(chemicals[ChemId.Glucose] + gained, 0, 1);
+        chemicals[ChemId.Reward] = clamp(chemicals[ChemId.Reward] + 0.15 * efficiency, 0, 1);
+
+        // Activity and speech feedback
+        const social = SocialStore.get(id);
+        if (social) {
+          social.activity = Activity.Eating;
+          if (Math.random() < 0.25) {
+            social.speechEmoji = '😋';
+            social.speechTimer = 25;
+          }
+        }
+        break; // eat one item per tick
       }
-      world.destroy(foodId);
     }
   }
 }
