@@ -114,6 +114,7 @@ export class CookingSystem extends System {
         }
         if (!recipe) {
           motor.wantCook = false;
+          motor.cookWaitTimer = 0;
           continue;
         }
 
@@ -153,12 +154,20 @@ export class CookingSystem extends System {
         // Campfire destroyed
         this.cookStates.delete(id);
         motor.wantCook = false;
+        motor.cookWaitTimer = 0;
         continue;
       }
 
       const dsq = distSq(transform.x, transform.z, campfireT.x, campfireT.z);
 
       if (dsq > CAMPFIRE_RANGE_SQ) {
+        // If campfire is very far away (>20 units), give up and eat raw
+        if (dsq > 20 * 20) {
+          this.cookStates.delete(id);
+          motor.wantCook = false;
+          motor.cookWaitTimer = 0;
+          continue;
+        }
         // Walk toward campfire
         const dx = campfireT.x - transform.x;
         const dz = campfireT.z - transform.z;
@@ -208,6 +217,7 @@ export class CookingSystem extends System {
         state.progress = 0;
         state.cooldown = 30; // short cooldown between cooks
         motor.wantCook = false;
+        motor.cookWaitTimer = 0;
       }
     }
   }

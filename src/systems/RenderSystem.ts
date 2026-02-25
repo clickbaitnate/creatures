@@ -6,12 +6,14 @@ import { LifecycleStore, LifeStage } from '../components/Lifecycle';
 import { MotorStore } from '../components/Motor';
 import { FoodStore } from './SensorySystem';
 import type { GodHand } from '../ui/GodHand';
+import { InventoryStore, countItem, ItemType } from '../components/Inventory';
 
 export class RenderSystem extends System {
   readonly query = TransformStore.bit | RenderableStore.bit;
   readonly priority = 100;
 
   godHand: GodHand | null = null;
+  voxelWorld: any = null; // VoxelWorld for water detection
   private deadTimers = new Map<number, number>();
   private baseScales = new Map<number, number>();
 
@@ -61,10 +63,16 @@ export class RenderSystem extends System {
       }
 
       // Place creature on terrain + mesh offset + subtle bobbing
+      // If on water with boat, float slightly higher
+      const inv = InventoryStore.get(id);
+      const hasBoat = inv ? countItem(inv, ItemType.Boat) > 0 : false;
+      const onWater = this.voxelWorld?.isWaterAt(transform.x, transform.z) ?? false;
+      const waterOffset = (hasBoat && onWater) ? 0.3 : 0; // Float on water with boat
+      
       if (lifecycle && lifecycle.stage === LifeStage.Alive) {
-        object.position.y = transform.y + meshYOffset + Math.sin(time * 3 + id * 1.7) * 0.03;
+        object.position.y = transform.y + meshYOffset + waterOffset + Math.sin(time * 3 + id * 1.7) * 0.03;
       } else {
-        object.position.y = transform.y + meshYOffset;
+        object.position.y = transform.y + meshYOffset + waterOffset;
       }
     }
 

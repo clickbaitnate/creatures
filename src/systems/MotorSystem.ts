@@ -1,6 +1,6 @@
 import { System } from '../ecs/System';
 import type { World } from '../ecs/World';
-import { TransformStore } from '../components/Transform';
+import { TransformStore, type TransformData } from '../components/Transform';
 import { BrainStore } from '../components/Brain';
 import { MotorStore } from '../components/Motor';
 import { GenomeStore } from '../components/Genome';
@@ -19,6 +19,10 @@ import { NEURON_INDICES, TIMERS, THRESHOLDS, MOVEMENT } from '../config/Constant
 // 48=moveForward, 49=turnLeft, 50=turnRight, 51=speedMod,
 // 52=eat, 53=gather, 54=hunt, 55=build,
 // 56=craft, 57=deposit, 58=trade, 59=patrol
+
+const COLLISION_RADIUS = 0.35;   // creature body radius
+const COLLISION_PUSH = 0.15;    // push-apart strength per frame
+const COLLISION_CHECK_SQ = 1.2 * 1.2; // only check pairs within this distance²
 
 export class MotorSystem extends System {
   readonly query = TransformStore.bit | BrainStore.bit | MotorStore.bit | GenomeStore.bit;
@@ -179,6 +183,43 @@ export class MotorSystem extends System {
           if (slope > 0) cost *= 1.0 + slope * 0.5;
         }
         biochem.chemicals[ChemId.ATP] = Math.max(0, biochem.chemicals[ChemId.ATP] - cost);
+      }
+    }
+
+    // ── Creature-to-creature collision resolution ──────────────
+    // Simple O(n²) push-apart; fine for <200 creatures
+    const alive: { id: number; t: TransformData }[] = [];
+    for (const id of entities) {
+      const lifecycle = LifecycleStore.get(id);
+      if (lifecycle && lifecycle.stage === LifeStage.Dead) continue;
+      const motor = MotorStore.get(id);
+      if (motor?.godHeld) continue;
+      const t = TransformStore.get(id);
+      if (t) alive.push({ id, t });
+    }
+
+    for (let i = 0; i < alive.length; i++) {
+      const a = alive[i];
+      for (let j = i + 1; j < alive.length; j++) {
+        const b = alive[j];
+        const dx = b.t.x - a.t.x;
+        const dz = b.t.z - a.t.z;
+        const dsq = dx * dx + dz * dz;
+
+        if (dsq < COLLISION_CHECK_SQ && dsq > 0.0001) {
+          const dist = Math.sqrt(dsq);
+          const overlap = COLLISION_RADIUS * 2 - dist;
+          if (overlap > 0) {
+            // Push apart along collision axis
+            const nx = dx / dist;
+            const nz = dz / dist;
+            const push = Math.min(overlap * 0.5, COLLISION_PUSH);
+            a.t.x -= nx * push;
+            a.t.z -= nz * push;
+            b.t.x += nx * push;
+            b.t.z += nz * push;
+          }
+        }
       }
     }
   }

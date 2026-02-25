@@ -48,6 +48,7 @@ export interface DeserializerTarget {
   dayNight: { timeOfDay: number; dayCount: number; isNight: boolean; lightLevel: number; sunAngle: number };
   zodiac: ZodiacCycle;
   marketSystem: any;
+  resourceGrid?: any;
   raidSystem?: any;
   dialecticSystem?: any;
   marketPanel?: any;

@@ -26,7 +26,7 @@ const FOOD_GLUCOSE: Partial<Record<ItemType, number>> = {
   [ItemType.CookedMeat]: 0.85,
   [ItemType.CookedBerry]: 0.50,
   [ItemType.CookedFish]: 0.75,
-  [ItemType.LargeMeat]: 0.25,
+  [ItemType.LargeMeat]: 0.45,
 };
 
 // Which foods to try eating, in preference order
@@ -66,9 +66,11 @@ export class EatingSystem extends System {
       if (!motor.wantEat && !hungry) continue;
 
       // Defer to CookingSystem when creature wants to cook and campfire is visible
-      // But override if starving — eat raw food to survive
+      // But override if: starving (hunger >= 0.4), or been waiting too long (120+ ticks)
       const senses = SensesStore.get(id);
-      if (motor.wantCook && senses?.campfireVisible && chemicals[ChemId.Hunger] < 0.5) continue;
+      if (motor.wantCook && senses?.campfireVisible
+        && chemicals[ChemId.Hunger] < 0.4
+        && motor.cookWaitTimer < 120) continue;
 
       const inv = InventoryStore.get(id)!;
       const { genome } = GenomeStore.get(id)!;

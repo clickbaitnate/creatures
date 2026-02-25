@@ -9,7 +9,7 @@ import { GenomeStore } from '../components/Genome';
 import { SocialStore, Activity } from '../components/Social';
 import { ExpressionStore } from '../components/Expression';
 import { InventoryStore, ITEM_NAMES, ItemType } from '../components/Inventory';
-import { VocabularyStore } from '../components/Vocabulary';
+import { VocabularyStore, ITEM_EMOJI } from '../components/Vocabulary';
 import { MemoryStore, MEMORY_SLOTS } from '../components/Memory';
 import { MatingStore } from '../components/Mating';
 import { DiaryStore } from '../components/Diary';
@@ -24,6 +24,16 @@ import type { DayNightState } from '../world/DayNightCycle';
 import type { SeasonState } from '../world/Seasons';
 import { SEASON_NAMES } from '../world/Seasons';
 import { simStats } from '../stats/SimStats';
+import { NatalChartStore } from '../components/NatalChart';
+import {
+  renderNatalChartSVG,
+  computeSkyState,
+  computeTransitAspects,
+  PLANET_NAMES, PLANET_SYMBOLS, PLANET_COLORS,
+  ASPECT_NAMES, ASPECT_SYMBOLS, ASPECT_COLORS,
+  ELEMENT_NAMES,
+} from '../world/Astrology';
+import type { AstrologySystem } from '../systems/AstrologySystem';
 
 // ── CSS Injection ─────────────────────────────────────────────
 
@@ -365,14 +375,47 @@ const CSS = `
 }
 
 .creature-inventory {
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.6);
-  padding: 4px 6px;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 4px;
-  font-family: 'JetBrains Mono', monospace;
-  line-height: 1.5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 2px;
 }
+
+.inv-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.inv-chip .inv-emoji { font-size: 12px; }
+.inv-chip .inv-count { color: rgba(255, 255, 255, 0.5); font-size: 9px; }
+
+.inv-compact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 2px 0;
+}
+
+.inv-compact .inv-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.inv-compact .inv-mini .inv-emoji { font-size: 11px; }
 
 .mood-badge {
   display: inline-flex;
@@ -588,6 +631,66 @@ const CSS = `
   transition: width 0.3s;
 }
 
+/* ── Astrology tab ── */
+.astro-planet-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.astro-planet-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.03);
+  font-size: 10px;
+}
+.astro-planet-row > span:first-child { width: 18px; text-align: center; }
+.astro-planet-row > span:nth-child(2) { width: 52px; }
+.astro-planet-row > span:nth-child(3) { flex: 1; text-align: right; }
+.astro-element-bar {
+  display: flex;
+  gap: 2px;
+  height: 22px;
+}
+.astro-el-segment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  font-size: 9px;
+  color: rgba(255,255,255,0.8);
+  min-width: 0;
+  overflow: hidden;
+}
+.astro-aspects {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.astro-aspect-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 3px;
+  font-size: 10px;
+}
+.astro-mod-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+}
+.astro-mod-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.03);
+}
+
 /* ── Hotkey hints ── */
 .hotkey {
   display: inline-block;
@@ -646,7 +749,7 @@ const ACTIVITY_LABELS: Record<number, string> = {
   4: 'Fighting', 5: 'Mating', 6: 'Building', 7: 'Gathering',
 };
 
-type TabId = 'overview' | 'items' | 'diary' | 'social';
+type TabId = 'overview' | 'items' | 'diary' | 'social' | 'astrology';
 
 // ── GameUI Class ──────────────────────────────────────────────
 
@@ -674,6 +777,7 @@ export interface GameUIConfig {
   onCycleCreature: (dir: number) => void;
   onSelectFaction: (factionId: number) => void;
   divinePower?: () => DivinePowerInfo | null;
+  astrologySystem?: AstrologySystem | null;
 }
 
 export class GameUI {
@@ -696,6 +800,7 @@ export class GameUI {
   // Tab state
   private activeTab: TabId = 'overview';
   private lastSelectedId = -1;
+  private preservedTab: TabId | null = null;
 
   constructor(cfg: GameUIConfig) {
     this.cfg = cfg;
@@ -755,6 +860,7 @@ export class GameUI {
       const tab = btn.dataset.tab as TabId | undefined;
       if (tab) {
         this.activeTab = tab;
+        this.preservedTab = tab; // Remember this tab for next creature
         this.updateCreaturePanel();
       }
     });
@@ -925,11 +1031,22 @@ export class GameUI {
   private updateCreaturePanel(): void {
     const selId = this.cfg.selectedId();
 
-    // Reset tab when creature changes
-    if (selId !== this.lastSelectedId) {
-      this.activeTab = 'overview';
-      this.lastSelectedId = selId;
+    // Preserve tab when creature changes (if a tab was previously selected)
+    if (selId !== this.lastSelectedId && this.lastSelectedId >= 0) {
+      // If we had a tab open, preserve it; otherwise default to overview
+      if (this.preservedTab) {
+        this.activeTab = this.preservedTab;
+      } else if (this.activeTab !== 'overview') {
+        // Preserve current tab if it's not overview
+        this.preservedTab = this.activeTab;
+      } else {
+        this.activeTab = 'overview';
+      }
+    } else if (selId === this.lastSelectedId && this.activeTab !== 'overview') {
+      // Update preserved tab if user manually changes tabs
+      this.preservedTab = this.activeTab;
     }
+    this.lastSelectedId = selId;
 
     if (selId < 0 || !this.cfg.world.has(selId)) {
       this.creatureContainer.innerHTML = `
@@ -987,6 +1104,7 @@ export class GameUI {
       { id: 'items', label: 'Items' },
       { id: 'diary', label: 'Diary' },
       { id: 'social', label: 'Social' },
+      { id: 'astrology', label: '✦ Chart' },
     ];
     const tabBarHtml = `
       <div class="tab-bar">
@@ -1008,6 +1126,9 @@ export class GameUI {
         break;
       case 'social':
         contentHtml = this.renderSocialTab(selId, social, gen, faction, rank);
+        break;
+      case 'astrology':
+        contentHtml = this.renderAstrologyTab(selId);
         break;
     }
 
@@ -1069,16 +1190,41 @@ export class GameUI {
       <div class="stat-section">
         <div class="stat-section-title">Activity · ${actLabel} ${weaponHtml}</div>
       </div>
+
+      <div class="stat-section">
+        <div class="stat-section-title">Carrying</div>
+        ${this.renderCompactInventory(selId)}
+      </div>
     `;
+  }
+
+  /** Compact one-line inventory for the Overview tab */
+  private renderCompactInventory(selId: number): string {
+    const inv = InventoryStore.get(selId);
+    if (!inv) return '<div style="font-size:9px;color:rgba(255,255,255,0.3)">Empty</div>';
+    const filled = inv.slots.filter(s => s.item !== -1 && s.count > 0);
+    if (filled.length === 0) return '<div style="font-size:9px;color:rgba(255,255,255,0.3)">Empty</div>';
+    const chips = filled.map(s => {
+      const emoji = ITEM_EMOJI[s.item as ItemType] ?? '';
+      const name = ITEM_NAMES[s.item as ItemType] ?? '?';
+      return `<span class="inv-mini"><span class="inv-emoji">${emoji}</span>${name} x${s.count}</span>`;
+    }).join('');
+    return `<div class="inv-compact">${chips}</div>`;
   }
 
   private renderItemsTab(selId: number): string {
     const inv = InventoryStore.get(selId);
-    let invHtml = '<div class="creature-inventory">Empty</div>';
+    let invHtml = '<div style="font-size:10px;color:rgba(255,255,255,0.3);padding:8px">Empty</div>';
     if (inv) {
-      const items = inv.slots.filter(s => s.item !== -1 && s.count > 0)
-        .map(s => `${ITEM_NAMES[s.item as ItemType] ?? '?'} x${s.count}`).join(', ');
-      invHtml = `<div class="creature-inventory">${items || 'Empty'}</div>`;
+      const filled = inv.slots.filter(s => s.item !== -1 && s.count > 0);
+      if (filled.length > 0) {
+        const chips = filled.map(s => {
+          const emoji = ITEM_EMOJI[s.item as ItemType] ?? '';
+          const name = ITEM_NAMES[s.item as ItemType] ?? '?';
+          return `<span class="inv-chip"><span class="inv-emoji">${emoji}</span>${name}<span class="inv-count">x${s.count}</span></span>`;
+        }).join('');
+        invHtml = `<div class="creature-inventory">${chips}</div>`;
+      }
 
       if (inv.equippedTool > 0) {
         const toolName = ITEM_NAMES[inv.equippedTool as ItemType] ?? 'Tool';
@@ -1208,6 +1354,173 @@ export class GameUI {
         </div>
       `);
     }
+
+    return html.join('');
+  }
+
+  private renderAstrologyTab(selId: number): string {
+    const nd = NatalChartStore.get(selId);
+    if (!nd) {
+      return `<div class="stat-section"><div style="font-size:10px;color:rgba(255,255,255,0.4)">No natal chart computed for this creature.</div></div>`;
+    }
+
+    const chart = nd.chart;
+    const influence = nd.influence;
+    const astroSys = this.cfg.astrologySystem;
+    const skyPositions = astroSys?.skyPositions ?? computeSkyState(0);
+    const transits = computeTransitAspects(skyPositions, chart.planets);
+
+    // Render the SVG natal chart wheel
+    const svgChart = renderNatalChartSVG(chart, transits, skyPositions, 250);
+
+    const html: string[] = [];
+
+    // Chart wheel
+    html.push(`
+      <div class="stat-section" style="text-align:center;">
+        <div class="stat-section-title">✦ Natal Chart</div>
+        ${svgChart}
+      </div>
+    `);
+
+    // Planet placements table
+    const signGlyphs = ['♈', '♉', '♊', '♋', '♌', '♍', '♎', '♏', '♐', '♑', '♒', '♓'];
+    let planetRows = '';
+    for (let p = 0; p < chart.planets.length; p++) {
+      const pos = chart.planets[p];
+      const signName = signGlyphs[pos.sign];
+      const deg = pos.degree.toFixed(1);
+      planetRows += `<div class="astro-planet-row">
+        <span style="color:${PLANET_COLORS[p]};font-weight:bold">${PLANET_SYMBOLS[p]}</span>
+        <span style="color:rgba(255,255,255,0.7);font-size:9px">${PLANET_NAMES[p].split(' ')[1]}</span>
+        <span style="color:rgba(255,255,255,0.9)">${signName} ${deg}°</span>
+      </div>`;
+    }
+
+    // Rising sign
+    const risingGlyph = signGlyphs[chart.rising];
+    planetRows += `<div class="astro-planet-row">
+      <span style="color:#FFD700;font-weight:bold">ASC</span>
+      <span style="color:rgba(255,255,255,0.7);font-size:9px">Rising</span>
+      <span style="color:rgba(255,255,255,0.9)">${risingGlyph} ${(chart.risingDegree % 30).toFixed(1)}°</span>
+    </div>`;
+
+    html.push(`
+      <div class="stat-section">
+        <div class="stat-section-title">Planet Placements</div>
+        <div class="astro-planet-grid">${planetRows}</div>
+      </div>
+    `);
+
+    // Elemental balance
+    const elLabels = ['🔥', '🌍', '💨', '💧'];
+    const elColors = ['#FF6B4A', '#8B7355', '#66CCAA', '#4488CC'];
+    let elHtml = '<div class="astro-element-bar">';
+    for (let e = 0; e < 4; e++) {
+      const pct = (chart.elementBalance[e] * 100).toFixed(0);
+      elHtml += `<div class="astro-el-segment" style="flex:${chart.elementBalance[e]};background:${elColors[e]}44;border:1px solid ${elColors[e]}66" title="${ELEMENT_NAMES[e]}: ${pct}%">
+        <span>${elLabels[e]} ${pct}%</span>
+      </div>`;
+    }
+    elHtml += '</div>';
+
+    // Modal balance
+    const modLabels = ['Cardinal', 'Fixed', 'Mutable'];
+    let modHtml = '<div class="astro-element-bar" style="margin-top:3px">';
+    for (let m = 0; m < 3; m++) {
+      const pct = (chart.modalBalance[m] * 100).toFixed(0);
+      modHtml += `<div class="astro-el-segment" style="flex:${chart.modalBalance[m]};background:rgba(150,150,200,0.15);border:1px solid rgba(150,150,200,0.3)">
+        <span style="font-size:8px">${modLabels[m]} ${pct}%</span>
+      </div>`;
+    }
+    modHtml += '</div>';
+
+    html.push(`
+      <div class="stat-section">
+        <div class="stat-section-title">Elemental Balance</div>
+        ${elHtml}
+        ${modHtml}
+      </div>
+    `);
+
+    // Natal aspects
+    if (chart.natalAspects.length > 0) {
+      let aspectHtml = '';
+      for (const asp of chart.natalAspects) {
+        const color = ASPECT_COLORS[asp.aspect] ?? '#888';
+        const harmony = asp.harmony > 0 ? '+' : '';
+        aspectHtml += `<div class="astro-aspect-row">
+          <span style="color:${PLANET_COLORS[asp.planet1]}">${PLANET_SYMBOLS[asp.planet1]}</span>
+          <span style="color:${color};font-size:11px">${ASPECT_SYMBOLS[asp.aspect]}</span>
+          <span style="color:${PLANET_COLORS[asp.planet2]}">${PLANET_SYMBOLS[asp.planet2]}</span>
+          <span style="color:rgba(255,255,255,0.4);font-size:8px;margin-left:4px">${ASPECT_NAMES[asp.aspect].split(' ')[1]} (${harmony}${(asp.harmony * 100).toFixed(0)}%)</span>
+        </div>`;
+      }
+      html.push(`
+        <div class="stat-section">
+          <div class="stat-section-title">Natal Aspects (${chart.natalAspects.length})</div>
+          <div class="astro-aspects">${aspectHtml}</div>
+        </div>
+      `);
+    }
+
+    // Active transits
+    const significantTransits = transits.filter(t => t.strength > 0.3);
+    if (significantTransits.length > 0) {
+      let transitHtml = '';
+      for (const t of significantTransits.slice(0, 10)) {
+        const color = ASPECT_COLORS[t.aspect] ?? '#888';
+        const harmony = t.harmony > 0 ? '+' : '';
+        transitHtml += `<div class="astro-aspect-row">
+          <span style="color:${PLANET_COLORS[t.transitPlanet]};opacity:0.6">${PLANET_SYMBOLS[t.transitPlanet]}ᵀ</span>
+          <span style="color:${color};font-size:11px">${ASPECT_SYMBOLS[t.aspect]}</span>
+          <span style="color:${PLANET_COLORS[t.natalPlanet]}">${PLANET_SYMBOLS[t.natalPlanet]}ᴺ</span>
+          <span style="color:rgba(255,255,255,0.4);font-size:8px;margin-left:4px">${harmony}${(t.harmony * 100).toFixed(0)}% · ${(t.strength * 100).toFixed(0)}% str</span>
+        </div>`;
+      }
+      html.push(`
+        <div class="stat-section">
+          <div class="stat-section-title">🔮 Active Transits (${significantTransits.length})</div>
+          <div class="astro-aspects">${transitHtml}</div>
+        </div>
+      `);
+    }
+
+    // Influence modifiers
+    const mods = [
+      { name: '☉ Vitality',       val: influence.vitalityMod, color: PLANET_COLORS[0] },
+      { name: '☽ Emotion',        val: influence.emotionMod, color: PLANET_COLORS[1] },
+      { name: '☿ Communication',  val: influence.communicationMod, color: PLANET_COLORS[2] },
+      { name: '♀ Love',           val: influence.loveMod, color: PLANET_COLORS[3] },
+      { name: '♂ Energy',         val: influence.energyMod, color: PLANET_COLORS[4] },
+      { name: '♃ Growth',         val: influence.growthMod, color: PLANET_COLORS[5] },
+      { name: '♄ Discipline',     val: influence.disciplineMod, color: PLANET_COLORS[6] },
+    ];
+
+    let modGridHtml = '';
+    for (const m of mods) {
+      const pct = ((m.val - 1) * 100);
+      const sign = pct >= 0 ? '+' : '';
+      const valColor = pct > 5 ? '#44FF88' : pct < -5 ? '#FF4444' : 'rgba(255,255,255,0.5)';
+      modGridHtml += `<div class="astro-mod-item">
+        <span style="color:${m.color};font-size:9px">${m.name}</span>
+        <span style="color:${valColor};font-size:10px;font-weight:bold">${sign}${pct.toFixed(0)}%</span>
+      </div>`;
+    }
+
+    const harmonyColor = influence.overallHarmony > 0.1 ? '#44FF88' : influence.overallHarmony < -0.1 ? '#FF4444' : '#AAAAAA';
+    const harmonyLabel = influence.overallHarmony > 0.3 ? 'Blessed' : influence.overallHarmony > 0.1 ? 'Favourable' : influence.overallHarmony < -0.3 ? 'Afflicted' : influence.overallHarmony < -0.1 ? 'Challenged' : 'Neutral';
+
+    html.push(`
+      <div class="stat-section">
+        <div class="stat-section-title">Astrological Influence</div>
+        <div style="text-align:center;margin-bottom:6px">
+          <span style="color:${harmonyColor};font-size:12px;font-weight:bold">${harmonyLabel}</span>
+          <span style="color:rgba(255,255,255,0.3);font-size:9px"> (${(influence.overallHarmony * 100).toFixed(0)}%)</span>
+        </div>
+        <div class="astro-mod-grid">${modGridHtml}</div>
+      </div>
+    `);
 
     return html.join('');
   }

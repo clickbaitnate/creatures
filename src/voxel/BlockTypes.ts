@@ -68,7 +68,7 @@ export const BLOCK_PROPS: BlockProps[] = [
   /* StoneBrick   */ { color: 0x909090, solid: true,  transparent: false, mineable: true,  mineYield: ItemType.CutStone, mineTicks: 50, emissive: false },
   /* Glass        */ { color: 0xCCEEFF, solid: true,  transparent: true,  mineable: true,  mineYield: null,              mineTicks: 5,  emissive: false },
   /* Thatch       */ { color: 0xD4B85C, solid: true,  transparent: false, mineable: true,  mineYield: ItemType.RawGrass, mineTicks: 10, emissive: false },
-  /* OreBlock     */ { color: 0xB87333, solid: true,  transparent: false, mineable: true,  mineYield: ItemType.RawOre,   mineTicks: 50, emissive: false },
+  /* OreBlock     */ { color: 0xB87333, solid: true,  transparent: false, mineable: true,  mineYield: ItemType.RawIron,  mineTicks: 50, emissive: false },
   /* Leaf         */ { color: 0x2D7D2D, solid: true,  transparent: true,  mineable: true,  mineYield: null,              mineTicks: 5,  emissive: false },
   /* Torch        */ { color: 0xFFCC33, solid: false, transparent: true,  mineable: true,  mineYield: null,              mineTicks: 2,  emissive: true  },
   /* Flower       */ { color: 0xFF6699, solid: false, transparent: true,  mineable: true,  mineYield: null,              mineTicks: 2,  emissive: false },

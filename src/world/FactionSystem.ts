@@ -135,6 +135,37 @@ export class FactionManager {
     return clanless;
   }
 
+  /** Get or create the Islander faction (maritime evangelists) */
+  getOrCreateIslanderFaction(): Faction {
+    let islanders = this.factions.find(f => f.name === 'Islanders');
+    if (!islanders) {
+      islanders = {
+        id: this.nextId++,
+        name: 'Islanders',
+        emoji: '⛵',
+        memberIds: new Set(),
+        color: 200, // Blue hue
+        relations: new Map(),
+        avgMonogamy: 0.4,
+        breedingNorm: 'scandalous', // More open to spreading knowledge
+        doctrine: ['⛵', '💧', '🌊'], // Maritime symbols
+        philosophy: 'Maritime Evangelism',
+        foundedTick: 0,
+        settlementX: 0,
+        settlementZ: 0,
+        settlementTier: '',
+        buildingCount: 0,
+      };
+      // Initialize relations with all existing factions
+      for (const existing of this.factions) {
+        islanders.relations.set(existing.id, 0);
+        existing.relations.set(islanders.id, 0);
+      }
+      this.factions.push(islanders);
+    }
+    return islanders;
+  }
+
   /** Record a social interaction between two creatures (builds bonds) */
   recordInteraction(entityA: number, entityB: number, positive: boolean): void {
     const key = entityA < entityB ? `${entityA}-${entityB}` : `${entityB}-${entityA}`;

@@ -164,6 +164,7 @@ export class GatheringSystem extends System {
           const [pwx, pwy, pwz] = this.voxelWorld!.blockToWorld(ms.targetBX, ms.targetBY, ms.targetBZ);
           this.miningParticles.spawnBreakParticles(pwx, pwy, pwz, props.color ?? 0x888888);
         }
+        // Actually destroy the block - setBlock already marks chunks dirty
         this.voxelWorld!.setBlock(ms.targetBX, ms.targetBY, ms.targetBZ, Block.Air);
         if (this.waterFlow) {
           this.waterFlow.markDirty(ms.targetBX, ms.targetBZ);

@@ -12,6 +12,7 @@ import { distSq, clamp } from '../utils/Math';
 import type { VoxelWorld } from '../voxel/VoxelWorld';
 import { Block } from '../voxel/BlockTypes';
 import { BrainStore } from '../components/Brain';
+import { SocialStore } from '../components/Social';
 import { GoalStore, GoalType } from '../components/Goal';
 import { simStats } from '../stats/SimStats';
 
@@ -35,14 +36,14 @@ const RECIPES: Recipe[] = [
   { inputs: [[ItemType.RawWood, 3]], output: ItemType.WoodSword, outputCount: 1, requiresWorkshop: false, requiresCraftingTable: true, requiredKnowledge: ['🪵', '⚔️'] },
   { inputs: [[ItemType.RawStone, 2], [ItemType.RawWood, 1]], output: ItemType.StoneSword, outputCount: 1, requiresWorkshop: false, requiresCraftingTable: true, requiredKnowledge: ['🪨', '🪵', '⚔️'] },
   { inputs: [[ItemType.RawWood, 2], [ItemType.RawStone, 1]], output: ItemType.Shield, outputCount: 1, requiresWorkshop: false, requiresCraftingTable: true, requiredKnowledge: ['🪨', '🪵', '🛡️'] },
-  // Workshop + CraftingTable required
-  { inputs: [[ItemType.RawWood, 2]], output: ItemType.Plank, outputCount: 3, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['🪵'] },
-  { inputs: [[ItemType.RawStone, 2]], output: ItemType.CutStone, outputCount: 2, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['🪨'] },
-  { inputs: [[ItemType.RawOre, 2], [ItemType.RawWood, 1]], output: ItemType.MetalIngot, outputCount: 1, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['⛏️', '🪵'] },
-  { inputs: [[ItemType.MetalIngot, 1], [ItemType.RawWood, 1]], output: ItemType.MetalAxe, outputCount: 1, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['⚙️', '🪵'] },
-  { inputs: [[ItemType.MetalIngot, 1], [ItemType.RawWood, 1]], output: ItemType.MetalPick, outputCount: 1, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['⚙️', '🪵'] },
-  // Boat: requires workshop + crafting table
-  { inputs: [[ItemType.Plank, 3], [ItemType.RawWood, 2]], output: ItemType.Boat, outputCount: 1, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['💧', '🪵'] },
+  // CraftingTable required (no workshop needed for basic processing)
+  { inputs: [[ItemType.RawWood, 2]], output: ItemType.Plank, outputCount: 3, requiresWorkshop: false, requiresCraftingTable: true, requiredKnowledge: ['🪵'] },
+  { inputs: [[ItemType.RawStone, 2]], output: ItemType.CutStone, outputCount: 2, requiresWorkshop: false, requiresCraftingTable: true, requiredKnowledge: ['🪨'] },
+  // Metal tools: workshop + crafting table (use IronIngot)
+  { inputs: [[ItemType.IronIngot, 1], [ItemType.RawWood, 1]], output: ItemType.MetalAxe, outputCount: 1, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['⚙️', '🪵'] },
+  { inputs: [[ItemType.IronIngot, 1], [ItemType.RawWood, 1]], output: ItemType.MetalPick, outputCount: 1, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['⚙️', '🪵'] },
+  // Boat: crafting table only (water crossing is essential)
+  { inputs: [[ItemType.Plank, 3], [ItemType.RawWood, 2]], output: ItemType.Boat, outputCount: 1, requiresWorkshop: false, requiresCraftingTable: true, requiredKnowledge: ['💧', '🪵'] },
   // Ship: larger vessel
   { inputs: [[ItemType.Plank, 5], [ItemType.RawWood, 3]], output: ItemType.Ship, outputCount: 1, requiresWorkshop: true, requiresCraftingTable: true, requiredKnowledge: ['💧', '🪵', '⛵'] },
   // Torch: no table needed
@@ -63,6 +64,7 @@ export class CraftingSystem extends System {
   readonly priority = 63;
 
   voxelWorld: VoxelWorld | null = null;
+  factionManager: any = null; // FactionManager for islander detection
   private craftTimers = new Map<number, number>();
 
   update(world: World, _dt: number): void {
@@ -136,11 +138,34 @@ export class CraftingSystem extends System {
       const goalData = GoalStore.get(id);
       const brainCraftSignal = brainData ? Math.max(0, brainData.brain.outputs[56]) : 0;
       const goalBonus = goalData?.activeGoal === GoalType.CraftTool ? 0.3 : 0;
-      const craftChance = Math.max(genome.creativity * 0.15, brainCraftSignal * 0.4) + goalBonus;
+      // Check if this is an islander
+      const social = SocialStore.get(id);
+      const isIslander = social && this.factionManager?.factions.find((f: any) => f.id === social.factionId)?.name === 'Islanders';
+      
+      // Increased base crafting chance, especially for boats
+      let craftChance = Math.max(genome.creativity * 0.2, brainCraftSignal * 0.5) + goalBonus;
+      
+      // Islanders get MASSIVE boat crafting boost
+      if (isIslander) {
+        craftChance += 0.6; // Very high chance for islanders
+      }
+      
+      // Special boost for boats when near water
+      if (this.voxelWorld) {
+        const [bx, , bz] = this.voxelWorld.worldToBlock(transform.x, 0, transform.z);
+        const height = this.voxelWorld.getHeight(bx, bz);
+        const hasWaterNearby = this.voxelWorld.getBlock(bx, height, bz) === Block.Water ||
+                               this.voxelWorld.getBlock(bx, height + 1, bz) === Block.Water;
+        if (hasWaterNearby) {
+          craftChance += 0.15; // Boost boat crafting near water
+        }
+      }
       if (Math.random() > craftChance) continue;
 
       for (const recipe of RECIPES) {
-        if (recipe.requiresWorkshop && !nearWorkshop) continue;
+        // Islanders can craft boats without workshop (they're desperate!)
+        const skipWorkshop = isIslander && recipe.output === ItemType.Boat;
+        if (recipe.requiresWorkshop && !nearWorkshop && !skipWorkshop) continue;
         if (recipe.requiresCraftingTable && !nearCraftingTable) continue;
 
         // Check vocabulary knowledge gate

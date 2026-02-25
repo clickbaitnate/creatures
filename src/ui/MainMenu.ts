@@ -1,13 +1,16 @@
 // Main menu — shown on launch, supports New World (seed) and Load World (drag-drop)
 
 import { loadAllRuns, exportRunsCSV, clearAllRuns, type RunRecord } from '../stats/SimStats';
+import { CelestialGlobe } from './CelestialGlobe';
 
 export class MainMenu {
   private root: HTMLDivElement;
   private seedInput: HTMLInputElement | null = null;
+  private globe: CelestialGlobe | null = null;
 
   onNewWorld: ((seed: number) => void) | null = null;
   onLoadWorld: ((file: File) => void) | null = null;
+  onPvPArena: (() => void) | null = null;
   trackingEnabled = false;
 
   constructor() {
@@ -22,6 +25,12 @@ export class MainMenu {
 
   show(): void {
     this.root.style.display = 'flex';
+    // Start celestial globe
+    if (!this.globe) {
+      this.globe = new CelestialGlobe();
+      const backdrop = this.root.querySelector('.menu-backdrop') as HTMLElement;
+      if (backdrop) this.globe.mount(backdrop);
+    }
     // Generate a fresh random seed
     this.seedInput = this.root.querySelector('#menu-seed') as HTMLInputElement;
     if (this.seedInput) {
@@ -75,6 +84,10 @@ export class MainMenu {
 
   hide(): void {
     this.root.style.display = 'none';
+    if (this.globe) {
+      this.globe.dispose();
+      this.globe = null;
+    }
   }
 
   private buildHTML(): string {
@@ -82,7 +95,7 @@ export class MainMenu {
       <div class="menu-backdrop"></div>
       <div class="menu-container">
         <div class="menu-header">
-          <h1 class="menu-title">CREATURES</h1>
+          <h1 class="menu-title">Seres</h1>
           <p class="menu-subtitle">Emergent Life Simulator</p>
         </div>
 
@@ -96,6 +109,10 @@ export class MainMenu {
           <button id="menu-start" class="menu-btn primary">Generate World</button>
         </div>
 
+        <div class="menu-section" style="margin-top:8px">
+          <button id="menu-pvp" class="menu-btn arena">⚔️ PvP Arena</button>
+        </div>
+
         <div class="menu-divider">
           <span>OR</span>
         </div>
@@ -104,9 +121,9 @@ export class MainMenu {
           <h2 class="menu-section-title">LOAD WORLD</h2>
           <div id="menu-drop-zone" class="drop-zone">
             <div class="drop-icon">&#x1F4C2;</div>
-            <p>Drag & drop a <strong>.creatures</strong> save file here</p>
+            <p>Drag & drop a <strong>.seres</strong> save file here</p>
             <p class="drop-hint">or click to browse</p>
-            <input type="file" id="menu-file-input" accept=".creatures" style="display:none" />
+            <input type="file" id="menu-file-input" accept=".seres,.creatures" style="display:none" />
           </div>
         </div>
 
@@ -137,6 +154,12 @@ export class MainMenu {
       const seedStr = (this.root.querySelector('#menu-seed') as HTMLInputElement)?.value || '42';
       const seed = this.parseSeed(seedStr);
       this.onNewWorld?.(seed);
+    });
+
+    // PvP Arena button
+    const pvpBtn = this.root.querySelector('#menu-pvp') as HTMLButtonElement;
+    pvpBtn?.addEventListener('click', () => {
+      this.onPvPArena?.();
     });
 
     // Random seed button
@@ -182,7 +205,7 @@ export class MainMenu {
       // Only handle if menu is hidden (in-game drop)
       if (this.root.style.display !== 'none') return;
       const file = e.dataTransfer?.files[0];
-      if (file && file.name.endsWith('.creatures')) {
+      if (file && (file.name.endsWith('.seres') || file.name.endsWith('.creatures'))) {
         this.onLoadWorld?.(file);
       }
     });
@@ -202,7 +225,7 @@ export class MainMenu {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `creatures-runs-${Date.now()}.csv`;
+      a.download = `seres-runs-${Date.now()}.csv`;
       a.click();
       URL.revokeObjectURL(url);
     });
@@ -234,6 +257,14 @@ export class MainMenu {
     style.textContent = `
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&display=swap');
 
+      @font-face {
+        font-family: 'Genty';
+        src: url('/fonts/GentyDemo-Regular.ttf') format('truetype');
+        font-weight: normal;
+        font-style: normal;
+        font-display: swap;
+      }
+
       #main-menu {
         position: fixed; inset: 0; z-index: 10000;
         display: flex; align-items: center; justify-content: center;
@@ -263,23 +294,38 @@ export class MainMenu {
       #main-menu .menu-container {
         position: relative; z-index: 1;
         width: 420px; max-width: 95vw;
-        background: rgba(15,15,30,0.85);
+        background: rgba(10,10,25,0.75);
         backdrop-filter: blur(20px);
-        border: 1px solid rgba(100,140,255,0.15);
+        border: 1px solid rgba(100,140,255,0.2);
         border-radius: 16px;
         padding: 40px 36px;
-        box-shadow: 0 0 80px rgba(60,100,255,0.1), 0 20px 60px rgba(0,0,0,0.5);
+        box-shadow: 0 0 80px rgba(60,100,255,0.15), 0 20px 60px rgba(0,0,0,0.5);
       }
 
       #main-menu .menu-header { text-align: center; margin-bottom: 32px; }
 
       #main-menu .menu-title {
-        font-size: 48px; font-weight: 900; letter-spacing: 8px;
-        background: linear-gradient(135deg, #6ec6ff 0%, #a78bfa 50%, #f472b6 100%);
+        font-family: 'Genty', 'Inter', sans-serif;
+        font-size: 72px; font-weight: normal; letter-spacing: -2px;
+        background: linear-gradient(90deg,
+          #ff0000, #ff8800, #ffff00, #00ff00, #0088ff, #8800ff, #ff00ff, #ff0000
+        );
+        background-size: 300% 100%;
         -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         background-clip: text; margin: 0;
         text-shadow: none;
-        filter: drop-shadow(0 0 20px rgba(120,160,255,0.3));
+        filter: drop-shadow(0 0 40px rgba(180,100,255,0.6))
+                drop-shadow(0 0 80px rgba(100,180,255,0.3))
+                drop-shadow(0 0 120px rgba(255,100,200,0.2));
+        animation: rainbow-shift 4s linear infinite, title-glow 3s ease-in-out infinite alternate;
+      }
+      @keyframes rainbow-shift {
+        0% { background-position: 0% 50%; }
+        100% { background-position: 300% 50%; }
+      }
+      @keyframes title-glow {
+        0% { filter: drop-shadow(0 0 40px rgba(180,100,255,0.6)) drop-shadow(0 0 80px rgba(100,180,255,0.3)) drop-shadow(0 0 120px rgba(255,100,200,0.2)); }
+        100% { filter: drop-shadow(0 0 60px rgba(255,150,100,0.7)) drop-shadow(0 0 100px rgba(150,255,180,0.4)) drop-shadow(0 0 150px rgba(100,150,255,0.3)); }
       }
 
       #main-menu .menu-subtitle {
@@ -337,6 +383,18 @@ export class MainMenu {
         box-shadow: 0 6px 30px rgba(90,120,255,0.5);
       }
       #main-menu .menu-btn.primary:active { transform: translateY(0); }
+
+      #main-menu .menu-btn.arena {
+        background: linear-gradient(135deg, #c0392b 0%, #e74c3c 50%, #f39c12 100%);
+        color: white;
+        box-shadow: 0 4px 20px rgba(231,76,60,0.3);
+        letter-spacing: 2px;
+      }
+      #main-menu .menu-btn.arena:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 30px rgba(231,76,60,0.5);
+      }
+      #main-menu .menu-btn.arena:active { transform: translateY(0); }
 
       #main-menu .menu-divider {
         display: flex; align-items: center; gap: 16px;

@@ -101,7 +101,8 @@ export class GodHand {
     this.voxelWorld = vw;
   }
 
-  /** Call on left mousedown. Returns true if this event was captured (creature hit). */
+  /** Call on left mousedown. Returns true if this event was captured (creature hit). 
+   *  Note: This now only tracks for potential drag, doesn't block selection. */
   onMouseDown(e: MouseEvent, world: World): boolean {
     if (e.button !== 0) return false;
     if (this.state !== GodHandState.Idle) return false;
@@ -132,7 +133,7 @@ export class GodHand {
     if (!lc || lc.stage !== LifeStage.Alive) return false;
     if (!MotorStore.get(entityId)) return false;
 
-    // Start hold timer
+    // Start hold timer (for potential drag, but don't block selection)
     this.state = GodHandState.Holding;
     this.heldEntityId = entityId;
     this.holdStartTime = performance.now();
@@ -142,7 +143,7 @@ export class GodHand {
     const t = TransformStore.get(entityId);
     if (t) this.originPos.set(t.x, t.y, t.z);
 
-    return true;
+    return false; // Don't block selection - let normal click handling proceed
   }
 
   /** Call on mousemove. */

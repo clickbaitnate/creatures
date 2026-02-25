@@ -19,11 +19,13 @@ import {
   emotionEmoji, pick,
 } from '../world/EmojiVocabulary';
 import { MemoryStore, MemoryType } from '../components/Memory';
-import { VocabularyStore, learn, pickKnown, learnAndPick } from '../components/Vocabulary';
+import { VocabularyStore, learn, pickKnown, learnAndPick, knows } from '../components/Vocabulary';
+import { ZealotryStore } from '../components/Zealotry';
 import { CombatStore } from '../components/Combat';
 import { DiaryStore, addDiaryEntry, DiaryEventType } from '../components/Diary';
 import type { SeasonState } from '../world/Seasons';
 import { Season } from '../world/Seasons';
+import type { CombatVFX } from '../creatures/CombatVFX';
 
 const TALK_RANGE_SQ = 4 * 4;
 const FIGHT_RANGE_SQ = 2.5 * 2.5;
@@ -42,6 +44,7 @@ export class SocialSystem extends System {
   hierarchySystem: HierarchySystem | null = null;
   politicsSystem: PoliticsSystem | null = null;
   seasonState: SeasonState | null = null;
+  combatVFX: CombatVFX | null = null;
   private talkTimers = new Map<number, number>();
   private challengeTimers = new Map<number, number>();
   private clanCheckTimer = 0;
@@ -186,6 +189,55 @@ export class SocialSystem extends System {
 
       // Close enough to talk?
       if (dsq < TALK_RANGE_SQ) {
+        // Islander maritime evangelism: aggressively teach boat knowledge
+        const myFactionData = this.factionManager?.factions.find(f => f.id === myFaction);
+        const isIslander = myFactionData?.name === 'Islanders';
+        if (isIslander && myFaction !== theirFaction) {
+          const myVocab = VocabularyStore.get(id);
+          const theirVocab = VocabularyStore.get(otherId);
+          const zealotry = ZealotryStore.get(id);
+          
+          // High zealotry = more aggressive evangelism
+          const evangelismChance = (zealotry?.zealotry ?? 0) * 0.3 + 0.2;
+          if (Math.random() < evangelismChance && myVocab && theirVocab) {
+            // Force-teach boat emojis
+            const boatEmojis = ['⛵', '💧', '🌊', '🪵'];
+            let taught = false;
+            for (const emoji of boatEmojis) {
+              if (knows(myVocab, emoji) && !knows(theirVocab, emoji)) {
+                learn(theirVocab, emoji);
+                taught = true;
+              }
+            }
+            
+            if (taught) {
+              // Aggressive speech about boats
+              social.speechEmoji = '⛵';
+              social.speechTimer = 60;
+              social.activity = Activity.Talking;
+              this.talkTimers.set(id, TALK_COOLDOWN);
+              
+              // If they resist learning, become hostile
+              const theirExpr = ExpressionStore.get(otherId);
+              if (theirExpr && Math.random() < 0.3) {
+                // Convert to aggression if they don't learn
+                if (expr) expr.anger = Math.min(1, expr.anger + 0.2);
+                theirExpr.fear = Math.min(1, (theirExpr.fear ?? 0) + 0.3);
+                // Record negative interaction
+                this.factionManager?.recordInteraction(id, otherId, false);
+              } else {
+                // Positive if they accept
+                this.factionManager?.recordInteraction(id, otherId, true);
+                if (this.factionManager) {
+                  const currentRel = this.factionManager.getRelation(myFaction, theirFaction) ?? 0;
+                  this.factionManager.setRelation(myFaction, theirFaction, clamp(currentRel + 0.05, -1, 1));
+                }
+              }
+              continue; // Skip normal interaction
+            }
+          }
+        }
+        
         // Same faction: friendly interactions
         if (myFaction === theirFaction) {
           if (Math.random() < genome.sociability * 0.1) {
@@ -287,6 +339,26 @@ export class SocialSystem extends System {
               const finalDmg = rawDmg * (1 - armorReduce) * coordBonus;
               otherSocial.health = clamp(otherSocial.health - finalDmg, 0, 1);
               if (biochem) biochem.chemicals[ChemId.Pain] = clamp(biochem.chemicals[ChemId.Pain] + 0.1, 0, 1);
+
+              // Combat VFX: sparks + slash trail
+              if (this.combatVFX) {
+                const otherT = TransformStore.get(otherId);
+                if (otherT) {
+                  if (armorReduce > 0.1) {
+                    // Blocked: metallic sparks
+                    this.combatVFX.spawnBlockSparks(otherT.x, otherT.y, otherT.z);
+                  } else {
+                    // Direct hit: orange sparks
+                    this.combatVFX.spawnHitSparks(otherT.x, otherT.y, otherT.z, 0xffaa22);
+                  }
+                  // Slash trail from attacker
+                  this.combatVFX.spawnSlashTrail(
+                    transform.x, transform.y, transform.z,
+                    transform.rotation,
+                    weaponMult > 1.5 ? 0xccddff : 0xffffff,
+                  );
+                }
+              }
 
               // Track damage in combat component for learning
               const otherCombat = CombatStore.get(otherId);

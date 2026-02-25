@@ -34,6 +34,7 @@ export class Dashboard {
 
   // Event log
   private eventLog: string[] = [];
+  private lastWorld: World | null = null;
 
   constructor() {
     this.canvas = document.createElement('canvas');
@@ -52,6 +53,7 @@ export class Dashboard {
         if (e.ctrlKey || e.metaKey) return; // don't intercept devtools
         this.visible = !this.visible;
         this.canvas.style.display = this.visible ? 'block' : 'none';
+        if (this.visible && this.lastWorld) this.draw(this.lastWorld);
       }
     });
   }
@@ -63,6 +65,7 @@ export class Dashboard {
 
   tick(world: World, tick: number): void {
     this.simTick = tick;
+    this.lastWorld = world;
     this.tickCounter++;
     if (this.tickCounter < UPDATE_INTERVAL) return;
     this.tickCounter = 0;

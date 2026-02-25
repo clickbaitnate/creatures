@@ -36,6 +36,11 @@ export const ITEM_EMOJI: Partial<Record<ItemType, string>> = {
   [ItemType.StoneSword]: '⚔️',
   [ItemType.Shield]: '🛡️',
   [ItemType.Ship]: '🚢',
+  [ItemType.RawFish]: '🐟',
+  [ItemType.CookedMeat]: '🍖',
+  [ItemType.CookedBerry]: '🍇',
+  [ItemType.CookedFish]: '🍣',
+  [ItemType.LargeMeat]: '🍗',
 };
 
 /** Create a new vocabulary starting with basic emotion, self, AND crafting emojis.

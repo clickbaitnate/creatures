@@ -496,9 +496,9 @@ export class InstinctSystem extends System {
             brain.outputs[53] *= 0.1; // hard suppress gather
             brain.outputs[54] *= 0.1; // hard suppress hunt
             brain.outputs[52] *= 0.5; // reduce eat (don't stop to eat at water edge)
-            // Mild build/craft boost (should build boats)
-            brain.outputs[55] += 0.15;
-            brain.outputs[56] += 0.2;
+            // Strong build boost (should build bridges or boats)
+            brain.outputs[55] += 0.4; // Build bridges!
+            brain.outputs[56] += 0.3; // Craft boats
           }
         }
       }
@@ -554,18 +554,22 @@ export class InstinctSystem extends System {
         const hasCooked = countItem(inv, ItemType.CookedMeat) > 0 ||
           countItem(inv, ItemType.CookedBerry) > 0 ||
           countItem(inv, ItemType.CookedFish) > 0;
-        if (hasRaw && !hasCooked) {
-          // Always signal wantCook so EatingSystem defers when campfire IS visible
+        if (hasRaw && !hasCooked && senses.campfireVisible) {
+          // Only set wantCook when a campfire is actually visible
           motor.wantCook = true;
-          if (senses.campfireVisible) {
-            brain.outputs[52] *= 0.3; // suppress raw eating — will cook instead
-            // Navigate toward campfire
-            brain.outputs[48] += 0.5;
-            if (senses.nearestCampfireAngle < -0.1) brain.outputs[49] += 0.3;
-            else if (senses.nearestCampfireAngle > 0.1) brain.outputs[50] += 0.3;
+          motor.cookWaitTimer++;
+          // Mildly suppress raw eating — but NOT if we've been waiting too long
+          if (motor.cookWaitTimer < 120) {
+            brain.outputs[52] *= 0.5; // 50% suppression (was 70%)
           }
-          // If no campfire visible, wantCook is set but eat suppression is NOT applied,
-          // so EatingSystem will still allow raw eating as a fallback
+          // Navigate toward campfire
+          brain.outputs[48] += 0.5;
+          if (senses.nearestCampfireAngle < -0.1) brain.outputs[49] += 0.3;
+          else if (senses.nearestCampfireAngle > 0.1) brain.outputs[50] += 0.3;
+        } else {
+          // No campfire visible or has cooked food — clear cook intent, eat raw
+          motor.wantCook = false;
+          motor.cookWaitTimer = 0;
         }
       }
 
@@ -677,6 +681,34 @@ export class InstinctSystem extends System {
           brain.outputs[48] += 0.3;
           if (senses.nearestCreatureAngle < -0.1) brain.outputs[49] += 0.2;
           else if (senses.nearestCreatureAngle > 0.1) brain.outputs[50] += 0.2;
+        }
+      }
+
+      // Instinct 27: Ore mining — creatures with picks prioritize mining ore blocks
+      if (inv && genome && transform && this.voxelWorld) {
+        const hasPick = countItem(inv, ItemType.StonePick) > 0 ||
+          countItem(inv, ItemType.MetalPick) > 0;
+        if (hasPick && hasSpace(inv) && energy > 0.3) {
+          // Scan nearby for ore blocks (Coal, IronOre, GoldOre)
+          const [bx, , bz] = this.voxelWorld.worldToBlock(transform.x, 0, transform.z);
+          let oreFound = false;
+          const scanR = 4;
+          for (let dx = -scanR; dx <= scanR && !oreFound; dx++) {
+            for (let dz = -scanR; dz <= scanR && !oreFound; dz++) {
+              const h = this.voxelWorld.getHeight(bx + dx, bz + dz);
+              for (let dy = -1; dy <= 2; dy++) {
+                const block = this.voxelWorld.getBlock(bx + dx, h + dy, bz + dz);
+                if (block === Block.Coal || block === Block.IronOre || block === Block.GoldOre) {
+                  oreFound = true;
+                  break;
+                }
+              }
+            }
+          }
+          if (oreFound) {
+            brain.outputs[53] += 0.5; // boost gather (mining)
+            brain.outputs[48] += 0.3; // move toward ore area
+          }
         }
       }
 

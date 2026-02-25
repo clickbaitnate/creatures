@@ -123,29 +123,15 @@ export class HuntingSystem extends System {
       catchChance = clamp(catchChance, 0.01, 0.95);
 
       if (Math.random() < catchChance) {
-        // Successful catch
+        // Successful catch — killer gets all the loot
         this.critterManager.kill(preyIdx);
 
-        // Use critter's meatType for drop
-        addItem(inv, def.meatType);
+        // Drop count scales with prey size: small=1, medium=2, large=3
+        const dropCount = def.size;
+        addItem(inv, def.meatType, dropCount);
         biochem.chemicals[ChemId.Reward] = clamp(biochem.chemicals[ChemId.Reward] + 0.3, 0, 1);
 
-        // Share meat with pack members on large prey
-        if (def.size >= 2 && packMembers.length > 1) {
-          for (const memberId of packMembers) {
-            if (memberId === id) continue;
-            const memberInv = InventoryStore.get(memberId);
-            if (memberInv && hasSpace(memberInv)) {
-              addItem(memberInv, ItemType.RawMeat);
-            }
-            const memberBio = BiochemStore.get(memberId);
-            if (memberBio) {
-              memberBio.chemicals[ChemId.Reward] = clamp(memberBio.chemicals[ChemId.Reward] + 0.2, 0, 1);
-            }
-          }
-        }
-
-        // Diary: hunt success for hunter and pack
+        // Diary
         const CRITTER_NAMES = ['Rabbit','Bug','Fish','Deer','Boar','Turkey','Frog','Snake','Squirrel','Elk'];
         const preyName = CRITTER_NAMES[critterType] ?? 'prey';
         const huntDiary = DiaryStore.get(id);
@@ -153,14 +139,6 @@ export class HuntingSystem extends System {
           detail: preyName,
           otherName: packMembers.length > 1 ? 'pack' : '',
         });
-        for (const memberId of packMembers) {
-          if (memberId === id) continue;
-          const mDiary = DiaryStore.get(memberId);
-          if (mDiary) addDiaryEntry(mDiary, 0, DiaryEventType.HuntSuccess, {
-            detail: preyName,
-            otherName: 'pack',
-          });
-        }
 
         // Speech: announce the kill
         const social = SocialStore.get(id);

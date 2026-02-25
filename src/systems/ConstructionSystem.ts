@@ -248,6 +248,7 @@ export class ConstructionSystem extends System {
         const [pwx, pwy, pwz] = this.voxelWorld.blockToWorld(mbx, mby, mbz);
         this.miningParticles.spawnBreakParticles(pwx, pwy, pwz, props.color ?? 0x888888);
       }
+      // Actually destroy the block - setBlock already marks chunks dirty
       this.voxelWorld.setBlock(mbx, mby, mbz, Block.Air);
       builder.mineTarget = null;
       builder.mineProgress = 0;

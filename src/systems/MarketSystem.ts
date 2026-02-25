@@ -46,6 +46,7 @@ export class MarketSystem extends System {
 
   factionManager: FactionManager | null = null;
   totalTrades = 0;
+  onTrade: ((tick: number, buyerFaction: number, sellerFaction: number, itemGiven: ItemType, itemReceived: ItemType) => void) | null = null;
 
   private barterTimers = new Map<number, number>();
 
@@ -115,6 +116,12 @@ export class MarketSystem extends System {
       if (tradeResult.traded) {
         this.totalTrades++;
         simStats.recordTrade();
+
+        // Notify market panel
+        if (this.onTrade) {
+          this.onTrade(0, social.factionId, otherSocial.factionId,
+            tradeResult.giveA ?? ItemType.RawBerry, tradeResult.giveB ?? ItemType.RawBerry);
+        }
 
         // Diary entries for both parties
         const diaryA = DiaryStore.get(id);

@@ -10,7 +10,7 @@ import { ZODIAC_NAMES, SIGN_DURATION, FULL_CYCLE } from '../world/Zodiac';
 const WIDTH = 600;
 const HEIGHT = 500;
 const HISTORY_SIZE = 500; // ticks of history
-const UPDATE_INTERVAL = 100;
+const UPDATE_INTERVAL = 1; // tick() is already called from diplomacy timer
 
 interface FactionHistory {
   population: number[];
@@ -57,6 +57,7 @@ export class ChartPanel {
         e.preventDefault();
         this.visible = !this.visible;
         this.canvas.style.display = this.visible ? 'block' : 'none';
+        if (this.visible) this.draw();
       }
     });
   }

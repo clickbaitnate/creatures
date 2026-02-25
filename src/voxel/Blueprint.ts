@@ -259,6 +259,35 @@ export function createLonghouseBlueprint(): Blueprint {
   });
 }
 
+export function createBridgeBlueprint(length: number = 7): Blueprint {
+  // Bridge: horizontal walkway across water
+  // length = number of blocks long (default 7)
+  const width = 3; // 3 blocks wide
+  const height = 2; // 2 blocks tall (supports + deck)
+  return createSmallBlueprint('Bridge', width, height, length, (x, y, z, w, h, d) => {
+    if (y === 0) {
+      // Bottom: supports every 2 blocks
+      if (z % 2 === 0 && (x === 0 || x === w - 1)) {
+        return Block.Stone; // Support pillars
+      }
+      if (x === Math.floor(w / 2)) {
+        return Block.Plank; // Center support beam
+      }
+      return Block.Air;
+    }
+    if (y === 1) {
+      // Top: deck
+      if (x === Math.floor(w / 2)) {
+        return Block.Plank; // Main walkway
+      }
+      if (x === 0 || x === w - 1) {
+        return Block.Wood; // Railings
+      }
+    }
+    return Block.Air;
+  });
+}
+
 // All small blueprints for tribe settlement building
 export const SMALL_BLUEPRINTS = [
   createHutBlueprint,

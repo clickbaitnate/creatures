@@ -20,7 +20,7 @@ import type { VoxelWorld } from '../voxel/VoxelWorld';
 import {
   createHutBlueprint, createWatchtowerBlueprint, createFarmPlotBlueprint,
   createShrineBlueprint, createWallSegmentBlueprint, createStoragePitBlueprint,
-  createCampfireBlueprint, createLonghouseBlueprint,
+  createCampfireBlueprint, createLonghouseBlueprint, createBridgeBlueprint,
   mutateBlueprint,
   type ConstructionSite,
 } from '../voxel/Blueprint';
@@ -49,6 +49,7 @@ const MAX_PER_TYPE: Partial<Record<BuildingType, number>> = {
   [BuildingType.Granary]: 1,
   [BuildingType.Monument]: 1,
   [BuildingType.Campfire]: 1,
+  [BuildingType.Workshop]: 1,
 };
 
 // Faction build queue cooldown
@@ -400,7 +401,10 @@ export class BuildingSystem extends System {
     if (walls < 4) return BuildingType.Wall;
     // Stage 8: Watchtower
     if (towers < 1) return BuildingType.Tower;
-    // Stage 9: Granary
+    // Stage 9: Workshop (unlocks metalworking)
+    const workshops = counts.get(BuildingType.Workshop) ?? 0;
+    if (workshops < 1) return BuildingType.Workshop;
+    // Stage 10: Granary
     if (granaries < 1) return BuildingType.Granary;
     // Stage 10: Complete the wall ring
     if (walls < 8) return BuildingType.Wall;
@@ -595,6 +599,31 @@ export class BuildingSystem extends System {
       factionId: social?.factionId ?? -1,
     };
 
+    this.constructionSystem.sites.push(site);
+  }
+
+  /** Create a bridge construction site across water */
+  createBridgeSite(creatureId: number, startX: number, startZ: number, length: number = 7): void {
+    if (!this.voxelWorld || !this.constructionSystem) return;
+    
+    const bp = createBridgeBlueprint(length);
+    const [bx, , bz] = this.voxelWorld.worldToBlock(startX, 0, startZ);
+    const surfY = this.voxelWorld.getHeight(bx, bz);
+    
+    const social = SocialStore.get(creatureId);
+    const site: ConstructionSite = {
+      id: nextSiteId++,
+      blueprint: bp,
+      originX: bx - Math.floor(bp.width / 2),
+      originY: surfY,
+      originZ: bz - Math.floor(bp.depth / 2),
+      placed: new Uint8Array(bp.width * bp.height * bp.depth),
+      placedCount: 0,
+      progress: 0,
+      active: true,
+      factionId: social?.factionId ?? -1,
+    };
+    
     this.constructionSystem.sites.push(site);
   }
 
